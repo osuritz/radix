@@ -1,3 +1,4 @@
+// Package version provides build information for radix.
 package version
 
 import (
@@ -5,53 +6,58 @@ import (
 	"runtime"
 )
 
+// Build information. Populated at build-time via ldflags.
 var (
-	// Version is the current version of radix
-	// Set during build: -ldflags "-X github.com/osuritz/radix/internal/version.Version=x.y.z"
 	Version = "dev"
-
-	// Commit is the git commit hash
-	// Set during build: -ldflags "-X github.com/osuritz/radix/internal/version.Commit=abc123"
-	Commit = "unknown"
-
-	// Date is the build date
-	// Set during build: -ldflags "-X github.com/osuritz/radix/internal/version.Date=2025-12-31"
-	Date = "unknown"
-
-	// GoVersion is the Go version used to build
-	GoVersion = runtime.Version()
-
-	// Platform is the OS/Arch combination
-	Platform = fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+	Commit  = "none"
+	Date    = "unknown"
+	BuiltBy = "unknown"
 )
 
-// Info represents version information
+// Info contains version and build information.
 type Info struct {
-	Version   string `json:"version"`
-	Commit    string `json:"commit"`
-	BuildDate string `json:"build_date"`
-	GoVersion string `json:"go_version"`
-	Platform  string `json:"platform"`
+	Version  string `json:"version"`
+	Commit   string `json:"commit"`
+	Date     string `json:"date"`
+	BuiltBy  string `json:"built_by"`
+	GoOS     string `json:"goos"`
+	GoArch   string `json:"goarch"`
+	Compiler string `json:"compiler"`
 }
 
-// GetInfo returns the version information
-func GetInfo() Info {
-	return Info{
-		Version:   Version,
-		Commit:    Commit,
-		BuildDate: Date,
-		GoVersion: GoVersion,
-		Platform:  Platform,
+// GetInfo returns the version information.
+func GetInfo() *Info {
+	return &Info{
+		Version:  Version,
+		Commit:   Commit,
+		Date:     Date,
+		BuiltBy:  BuiltBy,
+		GoOS:     runtime.GOOS,
+		GoArch:   runtime.GOARCH,
+		Compiler: runtime.Version(),
 	}
 }
 
-// String returns a formatted version string
-func (i Info) String() string {
-	return fmt.Sprintf("radix version %s (commit: %s, built: %s, go: %s, platform: %s)",
-		i.Version, i.Commit, i.BuildDate, i.GoVersion, i.Platform)
+// String returns formatted version information.
+func (i *Info) String() string {
+	return fmt.Sprintf(
+		"radix %s\ncommit: %s\nbuilt at: %s\nbuilt by: %s\ngoos: %s\ngoarch: %s\ncompiler: %s",
+		i.Version,
+		i.Commit,
+		i.Date,
+		i.BuiltBy,
+		i.GoOS,
+		i.GoArch,
+		i.Compiler,
+	)
 }
 
-// Short returns just the version number
-func (i Info) Short() string {
+// Short returns a short version string.
+func (i *Info) Short() string {
 	return i.Version
+}
+
+// UserAgent returns a user agent string for HTTP requests.
+func UserAgent() string {
+	return fmt.Sprintf("radix/%s", Version)
 }
