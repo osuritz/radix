@@ -19,6 +19,9 @@ type Config struct {
 	// TLS configuration (global)
 	TLS TLSConfig `mapstructure:"tls"`
 
+	// Metrics configuration (global)
+	Metrics MetricsConfig `mapstructure:"metrics"`
+
 	// Command-specific configs
 	Serve ServeConfig `mapstructure:"serve"`
 	Proxy ProxyConfig `mapstructure:"proxy"`
@@ -34,6 +37,13 @@ type TLSConfig struct {
 	CA         string `mapstructure:"ca"`
 	ClientAuth bool   `mapstructure:"client_auth"`
 	MinVersion string `mapstructure:"min_version"` // "1.2" or "1.3"
+}
+
+// MetricsConfig represents metrics/observability configuration
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Path    string `mapstructure:"path"`
+	Format  string `mapstructure:"format"` // "json" or "prometheus"
 }
 
 // ServeConfig represents configuration for the serve command
@@ -136,6 +146,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("tls.enabled", false)
 	v.SetDefault("tls.client_auth", false)
 	v.SetDefault("tls.min_version", "1.2")
+
+	// Metrics defaults
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.path", "/_metrics")
+	v.SetDefault("metrics.format", "json")
 
 	// Serve defaults
 	v.SetDefault("serve.dir", ".")
