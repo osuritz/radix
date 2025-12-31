@@ -1,6 +1,6 @@
 module github.com/osuritz/radix
 
-go 1.25
+go 1.24
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
