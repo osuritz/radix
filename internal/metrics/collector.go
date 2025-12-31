@@ -78,7 +78,11 @@ func (c *Collector) incrementMapCounter(m *sync.Map, key interface{}) {
 		}
 
 		// Try to increment the existing value
-		oldVal := val.(uint64)
+		oldVal, ok := val.(uint64)
+		if !ok {
+			// This should never happen since we control what goes into the map
+			return
+		}
 		if m.CompareAndSwap(key, oldVal, oldVal+1) {
 			return
 		}
@@ -138,14 +142,22 @@ func (c *Collector) Snapshot() Metrics {
 	// Convert status codes map
 	statusCodes := make(map[string]uint64)
 	c.statusCodes.Range(func(key, value interface{}) bool {
-		statusCodes[http.StatusText(key.(int))] = value.(uint64)
+		statusCode, okKey := key.(int)
+		count, okVal := value.(uint64)
+		if okKey && okVal {
+			statusCodes[http.StatusText(statusCode)] = count
+		}
 		return true
 	})
 
 	// Convert methods map
 	methods := make(map[string]uint64)
 	c.methods.Range(func(key, value interface{}) bool {
-		methods[key.(string)] = value.(uint64)
+		method, okKey := key.(string)
+		count, okVal := value.(uint64)
+		if okKey && okVal {
+			methods[method] = count
+		}
 		return true
 	})
 

@@ -13,7 +13,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
 	// Create test handler
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Hello, World!"))
 	})
@@ -60,7 +60,7 @@ func TestMetricsMiddlewareStatusCodes(t *testing.T) {
 			collector := metrics.NewCollector("test", "1.0.0")
 
 			// Create handler that returns the specific status
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			})
 
@@ -93,7 +93,7 @@ func TestMetricsMiddlewareMethods(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			collector := metrics.NewCollector("test", "1.0.0")
 
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -116,7 +116,7 @@ func TestMetricsMiddlewareBytesWritten(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
 	testData := "Hello, World! This is a test response."
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(testData))
 	})
@@ -139,7 +139,7 @@ func TestMetricsMiddlewareBytesWritten(t *testing.T) {
 func TestMetricsMiddlewareBytesReceived(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -165,7 +165,7 @@ func TestMetricsMiddlewareDefaultStatus(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
 	// Handler that doesn't explicitly call WriteHeader
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("test"))
 	})
 
@@ -190,7 +190,7 @@ func TestMetricsMiddlewareDefaultStatus(t *testing.T) {
 func TestMetricsMiddlewareResponseTiming(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("test"))
 	})
@@ -216,7 +216,7 @@ func TestMetricsMiddlewareResponseTiming(t *testing.T) {
 func TestMetricsMiddlewareMultipleRequests(t *testing.T) {
 	collector := metrics.NewCollector("test", "1.0.0")
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("test"))
 	})

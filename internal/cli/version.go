@@ -49,11 +49,11 @@ func runVersion(cmd *cobra.Command, _ []string) error {
 
 	if shortVersion {
 		// Short version output
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), info.Short())
+		fmt.Fprintln(cmd.OutOrStdout(), info.Short())
 		return nil
 	}
 
 	// Full version output
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), info.String())
+	fmt.Fprintln(cmd.OutOrStdout(), info.String())
 	return nil
 }

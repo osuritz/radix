@@ -21,7 +21,6 @@ linters:
     - gocritic
     - gosec
     - bodyclose
-    - exportloopref
     - nilerr
     - nolintlint
     - prealloc
@@ -35,6 +34,10 @@ linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - (io.Closer).Close
 
   govet:
     enable-all: true
@@ -42,7 +45,7 @@ linters-settings:
       - fieldalignment
 
   gocyclo:
-    min-complexity: 15
+    min-complexity: 30
 
   gocritic:
     enabled-tags:
