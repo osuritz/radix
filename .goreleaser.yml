@@ -98,11 +98,21 @@ release:
 
     **Installation:**
 
-    ```bash
-    # macOS/Linux
-    curl -sSL https://github.com/osuritz/radix/releases/download/{{ .Tag }}/radix_{{ .Version }}_{{ .Os }}_{{ .Arch }}.tar.gz | tar xz
+    Download the appropriate archive for your platform from the assets above, then extract and run:
 
-    # Or download directly from the release assets above
+    ```bash
+    # Extract the archive
+    tar xzf radix_{{ .Version }}_<os>_<arch>.tar.gz  # For .tar.gz files
+    # or
+    unzip radix_{{ .Version }}_<os>_<arch>.zip       # For .zip files
+
+    # Run radix
+    ./radix version
+    ```
+
+    Or install via Go:
+    ```bash
+    go install github.com/osuritz/radix/cmd/radix@{{ .Tag }}
     ```
 
 # Package managers disabled for now - only GitHub releases
