@@ -1,0 +1,59 @@
+# Radix Configuration Example
+# This file demonstrates all available configuration options
+
+# Global settings
+port: 8080
+host: localhost
+verbose: false
+
+# TLS settings (applies to all commands when enabled)
+tls:
+  enabled: false
+  cert: ./certs/cert.pem
+  key: ./certs/key.pem
+  ca: ./certs/ca.pem
+  client_auth: false
+  min_version: "1.3"  # "1.2" or "1.3"
+
+# Serve command configuration
+serve:
+  dir: ./public
+  index: index.html
+  spa: true
+  cors: true
+  gzip: true
+  cache: "max-age=3600"
+  # TLS-specific options
+  http_redirect: false
+  http_port: 8080
+  hsts: false
+
+# Proxy command configuration
+proxy:
+  target: http://localhost:3000
+  timeout: 30s
+  websocket: true
+  tls_skip_verify: false
+  # Backend TLS settings
+  backend_ca: ./certs/backend-ca.pem
+  backend_cert: ./certs/client-cert.pem
+  backend_key: ./certs/client-key.pem
+  # Path manipulation
+  rewrite: ""
+  strip_prefix: ""
+  # Headers to add/modify
+  headers: []
+
+# Echo command configuration
+echo:
+  delay: 0
+  status: 200
+  body: ""
+  headers: []
+
+# Mock command configuration
+mock:
+  routes: ./mocks/routes.yml
+  watch: true
+  latency: "0"
+  fail_rate: 0.0
