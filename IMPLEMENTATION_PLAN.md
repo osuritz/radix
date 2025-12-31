@@ -786,12 +786,21 @@ mock:
   - [ ] Security scanning (gosec, govulncheck)
   - [ ] Multi-platform builds
 - [ ] Release automation (GoReleaser)
-  - [ ] Cross-platform binaries
-  - [ ] Archive generation
-  - [ ] Checksums and signatures
+  - [ ] Cross-platform binaries (macOS, Windows, Linux)
+  - [ ] Archive generation (.tar.gz, .zip)
+  - [ ] SHA256 checksums
+  - [ ] Configure .goreleaser.yml
+- [ ] Binary signing
+  - [ ] macOS: Apple Developer ID codesigning setup
+  - [ ] macOS: Notarization with gon
+  - [ ] Windows: Authenticode signing (osslsigncode or signtool)
+  - [ ] Linux/All: GPG signing for checksums
+  - [ ] Document signature verification
 - [ ] Distribution
-  - [ ] GitHub releases
-  - [ ] Installation documentation
+  - [ ] GitHub releases automation
+  - [ ] Installation documentation (download, verify, install)
+  - [ ] Signature verification guide
+  - [ ] Release notes template
 
 ## 6. Code Quality Standards
 
@@ -860,13 +869,124 @@ release:
 	goreleaser release --clean
 ```
 
-### GoReleaser
-- Cross-platform builds (Linux, macOS, Windows, ARM)
-- Archive generation (.tar.gz, .zip)
-- Checksums & signatures
-- Homebrew tap (optional)
-- Docker images (optional)
+### GoReleaser Configuration
+
+**Build Matrix:**
+- **macOS**: darwin/amd64, darwin/arm64
+- **Windows**: windows/amd64, windows/arm64
+- **Linux**: linux/amd64, linux/arm64, linux/arm
+
+**Features:**
+- Cross-platform builds with CGO disabled
+- Archive generation (.tar.gz for Unix, .zip for Windows)
+- Automatic checksums (SHA256)
 - GitHub release automation
+- Release notes generation from commits
+
+**Binary Signing:**
+
+1. **macOS Code Signing**
+   ```yaml
+   # .goreleaser.yml
+   signs:
+     - cmd: gon
+       args: ["gon.hcl"]
+       signature: "${artifact}.dmg"  # or .pkg
+       artifacts: checksum
+   ```
+   - Use `gon` tool for notarization
+   - Requires Apple Developer ID certificate
+   - Environment variables: `AC_USERNAME`, `AC_PASSWORD`
+   - Notarize for Gatekeeper compatibility
+
+2. **Windows Authenticode Signing**
+   ```yaml
+   signs:
+     - cmd: osslsigncode
+       args:
+         - sign
+         - -certs
+         - "${certificate}"
+         - -key
+         - "${key}"
+         - -in
+         - "${artifact}"
+         - -out
+         - "${signature}"
+       artifacts: checksum
+   ```
+   - Use `osslsigncode` or Windows SDK `signtool`
+   - Requires valid code signing certificate
+   - Timestamp server for long-term validity
+
+3. **GPG Signing (All Platforms)**
+   ```yaml
+   signs:
+     - artifacts: checksum
+       cmd: gpg
+       args:
+         - "--batch"
+         - "-u"
+         - "{{ .Env.GPG_FINGERPRINT }}"
+         - "--output"
+         - "${signature}"
+         - "--detach-sign"
+         - "${artifact}"
+   ```
+   - Sign SHA256SUMS file
+   - Create detached signatures for binaries
+   - Public key published in repository
+
+**Example .goreleaser.yml structure:**
+```yaml
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    ignore:
+      - goos: windows
+        goarch: arm
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+```
 
 ### CI/CD (GitHub Actions)
 ```yaml
@@ -939,10 +1059,34 @@ These can be considered for future versions based on user feedback.
 - Linux: CI validation, community testing
 
 ### Distribution:
-- macOS: Homebrew tap (primary), direct download
-- Windows: Direct download (.zip), potential Chocolatey/Scoop
-- Linux: Direct download (.tar.gz), GitHub releases
-- All platforms: `go install` support
+**Primary: GitHub Releases with Signed Binaries**
+
+All platforms will be distributed via GitHub releases with downloadable, signed binaries:
+
+- **macOS**:
+  - `.tar.gz` archives with codesigned binaries
+  - Apple Developer ID signature (notarization for Gatekeeper)
+  - Universal binaries (amd64 + arm64) or separate builds
+
+- **Windows**:
+  - `.zip` archives with Authenticode-signed executables
+  - Microsoft certificate signing
+  - SmartScreen reputation building
+
+- **Linux**:
+  - `.tar.gz` archives
+  - GPG-signed checksums file (SHA256SUMS.asc)
+  - Detached GPG signatures for binaries
+
+- **All platforms**:
+  - `go install github.com/osuritz/radix/cmd/radix@latest` support
+  - SHA256 checksums for all artifacts
+  - SLSA provenance (optional, for supply chain security)
+
+**Future Considerations (post-v1.0):**
+- Homebrew tap (macOS)
+- Chocolatey/Scoop (Windows)
+- APT/Snap repositories (Linux)
 
 ## 11. Success Metrics
 
@@ -952,7 +1096,66 @@ These can be considered for future versions based on user feedback.
 - **Performance**: Handle 1000+ req/s for static serving
 - **Compatibility**: Go 1.21+ on macOS, Windows, Linux
 
-## 12. Example Usage Scenarios
+## 12. Binary Verification Guide
+
+Users should verify downloaded binaries before installation. Documentation will include:
+
+### macOS Verification
+```bash
+# Verify codesigned binary
+codesign -v -v radix
+
+# Check signature details
+codesign -d -vvv radix
+
+# Verify notarization
+spctl -a -v radix
+```
+
+### Windows Verification
+```bash
+# Using PowerShell
+Get-AuthenticodeSignature radix.exe
+
+# Check signature details
+signtool verify /pa radix.exe
+```
+
+### Linux/All Platforms - GPG Verification
+```bash
+# Import public key (published in repository)
+curl -sL https://github.com/osuritz/radix/releases/download/v1.0.0/radix.asc | gpg --import
+
+# Verify checksums file signature
+gpg --verify checksums.txt.asc checksums.txt
+
+# Verify binary checksum
+sha256sum -c checksums.txt --ignore-missing
+```
+
+### Quick Verification Script
+```bash
+#!/bin/bash
+# verify-radix.sh
+VERSION="v1.0.0"
+BINARY="radix_${VERSION}_$(uname -s)_$(uname -m).tar.gz"
+
+# Download files
+curl -LO "https://github.com/osuritz/radix/releases/download/${VERSION}/${BINARY}"
+curl -LO "https://github.com/osuritz/radix/releases/download/${VERSION}/checksums.txt"
+curl -LO "https://github.com/osuritz/radix/releases/download/${VERSION}/checksums.txt.asc"
+
+# Import GPG key
+curl -sL "https://github.com/osuritz/radix/releases/download/${VERSION}/radix.asc" | gpg --import
+
+# Verify
+gpg --verify checksums.txt.asc checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+
+echo "✓ Verification successful!"
+```
+
+## 13. Example Usage Scenarios
 
 ### Static Development Server
 ```bash
@@ -996,7 +1199,7 @@ radix mock --routes ./api-mocks.yml --watch
 radix mock --routes ./api-mocks.yml --fail-rate 10
 ```
 
-## 13. Next Steps
+## 14. Next Steps
 
 1. **Review and approve this plan** ✓
 2. **Set up initial project structure**
@@ -1009,23 +1212,28 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
 9. **Add HTTPS support to core commands**
 10. **Build advanced commands (echo, mock)**
 11. **Polish, test, and release**
+12. **Set up binary signing (Apple ID, code signing cert, GPG key)**
 
 ---
 
-## 14. Design Decisions Summary
+## 15. Design Decisions Summary
 
 **✓ Confirmed for v1.0:**
 - HTTPS/TLS support (phased: generate certs → load certs → integrate per command)
 - Metrics endpoint (all commands, JSON + Prometheus formats)
 - Config validation command
 - Platform priority: macOS > Windows > Linux
-- Distribution: Homebrew (macOS), direct downloads (all), `go install`
+- Distribution: GitHub releases with signed binaries
+  - macOS: Apple Developer ID codesigning + notarization
+  - Windows: Authenticode signing
+  - Linux: GPG-signed checksums
+- `go install` support for all platforms
 
 **✗ Deferred to future versions:**
 - Interactive config generation mode
 - Combo mode (multiple servers simultaneously)
+- Package managers (Homebrew, Chocolatey, Scoop, apt, snap)
 - Docker images
-- Advanced package managers (apt, snap, chocolatey)
 - Authentication/authorization
 - Database integration
 - Clustering/distributed mode
