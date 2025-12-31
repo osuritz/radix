@@ -230,14 +230,16 @@ func getStatusColor(status int) string {
 
 // formatDuration formats duration in human-readable format
 func formatDuration(d time.Duration) string {
-	if d < time.Microsecond {
+	switch {
+	case d < time.Microsecond:
 		return fmt.Sprintf("%dns", d.Nanoseconds())
-	} else if d < time.Millisecond {
+	case d < time.Millisecond:
 		return fmt.Sprintf("%dµs", d.Microseconds())
-	} else if d < time.Second {
+	case d < time.Second:
 		return fmt.Sprintf("%dms", d.Milliseconds())
+	default:
+		return fmt.Sprintf("%.2fs", d.Seconds())
 	}
-	return fmt.Sprintf("%.2fs", d.Seconds())
 }
 
 // formatSize formats byte size in human-readable format
