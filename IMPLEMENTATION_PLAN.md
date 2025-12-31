@@ -680,7 +680,61 @@ mock:
 - [ ] Add global metrics flags (--metrics, --metrics-path, --metrics-format)
 - [ ] Tests for metrics collection
 
-### Phase 3: TLS Infrastructure
+### Phase 3: CI/CD Pipeline & Automation
+- [ ] **GitHub Actions Workflows**
+  - [ ] Create `.github/workflows/ci.yml` for continuous integration
+  - [ ] Create `.github/workflows/release.yml` for releases
+  - [ ] Set up workflow triggers (push, pull_request, tags)
+
+- [ ] **Build Automation**
+  - [ ] Multi-platform build matrix (macOS, Windows, Linux)
+  - [ ] Multiple Go versions (1.21, 1.22, 1.23)
+  - [ ] Build caching for faster CI runs
+  - [ ] Artifact uploading for builds
+
+- [ ] **Code Quality & Linting**
+  - [ ] Integrate golangci-lint with multiple linters
+  - [ ] Configure linters (.golangci.yml)
+  - [ ] Run `go vet` and `staticcheck`
+  - [ ] Check code formatting with `gofmt`
+  - [ ] Enforce consistent imports with `goimports`
+
+- [ ] **Testing Automation**
+  - [ ] Run tests on all platforms
+  - [ ] Enable race detection (`-race` flag)
+  - [ ] Generate coverage reports
+  - [ ] Upload coverage to Codecov or similar
+  - [ ] Set minimum coverage threshold
+
+- [ ] **Security Scanning**
+  - [ ] Integrate gosec for security issues
+  - [ ] Run govulncheck for vulnerability scanning
+  - [ ] Dependency security scanning
+  - [ ] SAST (Static Application Security Testing)
+
+- [ ] **Semantic Versioning**
+  - [ ] Implement version detection from git tags
+  - [ ] Support semantic versioning (vX.Y.Z)
+  - [ ] Generate changelog from commits
+  - [ ] Version bump automation
+
+- [ ] **Release Automation (GoReleaser)**
+  - [ ] Configure `.goreleaser.yml`
+  - [ ] Cross-platform binary builds
+  - [ ] Archive generation (.tar.gz, .zip)
+  - [ ] SHA256 checksum generation
+  - [ ] GitHub release creation
+  - [ ] Release notes generation
+  - [ ] Homebrew formula (future)
+
+- [ ] **Additional Automation**
+  - [ ] Dependabot configuration for dependency updates
+  - [ ] Pull request templates
+  - [ ] Issue templates
+  - [ ] CODEOWNERS file
+  - [ ] Branch protection rules documentation
+
+### Phase 4: TLS Infrastructure
 - [ ] **TLS Phase 1: Certificate Generation**
   - [ ] Implement `internal/tls/generator.go` for self-signed cert generation
   - [ ] Create `radix gencert` command
@@ -699,7 +753,7 @@ mock:
   - [ ] Add certificate validation
   - [ ] Create TLS configuration tests
 
-### Phase 4: Core Commands (HTTP)
+### Phase 5: Core Commands (HTTP)
 - [ ] Implement `serve` command (HTTP)
   - [ ] Basic static file serving
   - [ ] Directory listing
@@ -719,7 +773,7 @@ mock:
   - [ ] Add proxy-specific metrics (backend response times, errors, etc.)
   - [ ] Tests for proxy command
 
-### Phase 5: Core Commands (HTTPS)
+### Phase 6: Core Commands (HTTPS)
 - [ ] **TLS Phase 3a: Serve Command TLS**
   - [ ] Add HTTPS support to serve command
   - [ ] Implement HTTP/2 support
@@ -734,7 +788,7 @@ mock:
   - [ ] Backend certificate verification
   - [ ] Integration tests with TLS
 
-### Phase 6: Advanced Commands (HTTP)
+### Phase 7: Advanced Commands (HTTP)
 - [ ] Implement `echo` command (HTTP)
   - [ ] Request inspection and formatting
   - [ ] Configurable responses
@@ -753,7 +807,7 @@ mock:
   - [ ] Add mock-specific metrics (route matches, template renders, config reloads)
   - [ ] Tests for mock command
 
-### Phase 7: Advanced Commands (HTTPS)
+### Phase 8: Advanced Commands (HTTPS)
 - [ ] **TLS Phase 3c: Echo Command TLS**
   - [ ] Add HTTPS support to echo
   - [ ] Display TLS connection info in responses
@@ -767,7 +821,7 @@ mock:
   - [ ] Template support for client cert fields
   - [ ] Integration tests with complex TLS scenarios
 
-### Phase 8: Polish & Release
+### Phase 9: Polish & Release
 - [ ] Comprehensive testing (unit + integration)
   - [ ] Achieve >80% code coverage
   - [ ] End-to-end TLS testing
@@ -777,30 +831,29 @@ mock:
   - [ ] Command documentation
   - [ ] TLS setup guide
   - [ ] Example configurations
+  - [ ] Contributing guidelines
 - [ ] Examples
   - [ ] Basic usage examples for each command
   - [ ] TLS configuration examples
   - [ ] Mock API examples
-- [ ] CI/CD setup (GitHub Actions)
-  - [ ] Lint and test automation
-  - [ ] Security scanning (gosec, govulncheck)
-  - [ ] Multi-platform builds
-- [ ] Release automation (GoReleaser)
-  - [ ] Cross-platform binaries (macOS, Windows, Linux)
-  - [ ] Archive generation (.tar.gz, .zip)
-  - [ ] SHA256 checksums
-  - [ ] Configure .goreleaser.yml
-- [ ] Binary signing
+  - [ ] Real-world use case examples
+- [ ] Binary signing (if not in Phase 3)
   - [ ] macOS: Apple Developer ID codesigning setup
   - [ ] macOS: Notarization with gon
   - [ ] Windows: Authenticode signing (osslsigncode or signtool)
   - [ ] Linux/All: GPG signing for checksums
   - [ ] Document signature verification
-- [ ] Distribution
-  - [ ] GitHub releases automation
-  - [ ] Installation documentation (download, verify, install)
+- [ ] Distribution enhancements
+  - [ ] Homebrew tap setup
+  - [ ] Chocolatey package (Windows)
+  - [ ] Scoop manifest (Windows)
+  - [ ] Installation documentation
   - [ ] Signature verification guide
-  - [ ] Release notes template
+- [ ] Final polish
+  - [ ] Performance benchmarks
+  - [ ] Memory profiling
+  - [ ] Error message improvements
+  - [ ] Help text refinement
 
 ## 6. Code Quality Standards
 
@@ -1202,17 +1255,19 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
 ## 14. Next Steps
 
 1. **Review and approve this plan** ✓
-2. **Set up initial project structure**
-3. **Initialize Go module and dependencies**
-4. **Implement root command and configuration**
-5. **Start with foundation phase (version, validate, config)**
-6. **Implement metrics infrastructure**
-7. **Implement TLS infrastructure (gencert, loading)**
-8. **Build core commands (serve, proxy) with HTTP**
-9. **Add HTTPS support to core commands**
-10. **Build advanced commands (echo, mock)**
-11. **Polish, test, and release**
-12. **Set up binary signing (Apple ID, code signing cert, GPG key)**
+2. **Phase 1: Foundation** ✓ (completed)
+3. **Phase 2: Metrics Infrastructure** ✓ (completed)
+4. **Phase 3: CI/CD Pipeline & Automation** ← Current
+   - Set up GitHub Actions workflows
+   - Configure linters and code quality tools
+   - Implement semantic versioning
+   - Set up GoReleaser for automated releases
+5. **Phase 4: TLS Infrastructure** (gencert, loading)
+6. **Phase 5: Core Commands (HTTP)** (serve, proxy)
+7. **Phase 6: Core Commands (HTTPS)**
+8. **Phase 7: Advanced Commands (HTTP)** (echo, mock)
+9. **Phase 8: Advanced Commands (HTTPS)**
+10. **Phase 9: Polish & Release**
 
 ---
 
