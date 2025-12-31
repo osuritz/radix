@@ -105,39 +105,45 @@ release:
     # Or download directly from the release assets above
     ```
 
-brews:
-  - name: radix
-    repository:
-      owner: osuritz
-      name: homebrew-radix
-    folder: Formula
-    homepage: https://github.com/osuritz/radix
-    description: Multi-mode HTTP server for local development
-    license: MIT
-    test: |
-      system "#{bin}/radix version"
-    install: |
-      bin.install "radix"
+# Package managers disabled for now - only GitHub releases
+# Uncomment these when ready to publish to package managers
+#
+# brews:
+#   - name: radix
+#     repository:
+#       owner: osuritz
+#       name: homebrew-radix
+#     directory: Formula
+#     homepage: https://github.com/osuritz/radix
+#     description: Multi-mode HTTP server for local development
+#     license: MIT
+#     test: |
+#       system "#{bin}/radix version"
+#     install: |
+#       bin.install "radix"
+#
+# scoops:
+#   - name: radix
+#     repository:
+#       owner: osuritz
+#       name: scoop-radix
+#     directory: bucket
+#     homepage: https://github.com/osuritz/radix
+#     description: Multi-mode HTTP server for local development
+#     license: MIT
 
-scoops:
-  - name: radix
-    repository:
-      owner: osuritz
-      name: scoop-radix
-    folder: bucket
-    homepage: https://github.com/osuritz/radix
-    description: Multi-mode HTTP server for local development
-    license: MIT
-
-nfpms:
-  - id: radix
-    package_name: radix
-    homepage: https://github.com/osuritz/radix
-    description: Multi-mode HTTP server for local development
-    maintainer: Olivier Suritz <olivier@example.com>
-    license: MIT
-    formats:
-      - deb
-      - rpm
-      - apk
-    bindir: /usr/bin
+# Linux packages (DEB, RPM, APK) disabled for now
+# Uncomment when ready to publish to Linux package repositories
+#
+# nfpms:
+#   - id: radix
+#     package_name: radix
+#     homepage: https://github.com/osuritz/radix
+#     description: Multi-mode HTTP server for local development
+#     maintainer: Olivier Suritz <olivier@example.com>
+#     license: MIT
+#     formats:
+#       - deb
+#       - rpm
+#       - apk
+#     bindir: /usr/bin
