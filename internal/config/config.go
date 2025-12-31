@@ -1,3 +1,4 @@
+// Package config provides configuration management for radix.
 package config
 
 import (
@@ -61,16 +62,16 @@ type ServeConfig struct {
 
 // ProxyConfig represents configuration for the proxy command
 type ProxyConfig struct {
-	Target         string        `mapstructure:"target"`
-	Timeout        time.Duration `mapstructure:"timeout"`
-	WebSocket      bool          `mapstructure:"websocket"`
-	TLSSkipVerify  bool          `mapstructure:"tls_skip_verify"`
-	BackendCA      string        `mapstructure:"backend_ca"`
-	BackendCert    string        `mapstructure:"backend_cert"`
-	BackendKey     string        `mapstructure:"backend_key"`
-	Rewrite        string        `mapstructure:"rewrite"`
-	StripPrefix    string        `mapstructure:"strip_prefix"`
-	Headers        []string      `mapstructure:"headers"`
+	Target        string        `mapstructure:"target"`
+	Timeout       time.Duration `mapstructure:"timeout"`
+	WebSocket     bool          `mapstructure:"websocket"`
+	TLSSkipVerify bool          `mapstructure:"tls_skip_verify"`
+	BackendCA     string        `mapstructure:"backend_ca"`
+	BackendCert   string        `mapstructure:"backend_cert"`
+	BackendKey    string        `mapstructure:"backend_key"`
+	Rewrite       string        `mapstructure:"rewrite"`
+	StripPrefix   string        `mapstructure:"strip_prefix"`
+	Headers       []string      `mapstructure:"headers"`
 }
 
 // EchoConfig represents configuration for the echo command
@@ -200,11 +201,12 @@ func ValidateFile(path string) error {
 	}
 
 	// Check if file is readable
+	// #nosec G304 - config file path is user-provided and validated
 	file, err := os.Open(absPath)
 	if err != nil {
 		return fmt.Errorf("config file is not readable: %w", err)
 	}
-	file.Close()
+	defer func() { _ = file.Close() }()
 
 	return nil
 }

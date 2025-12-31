@@ -19,7 +19,7 @@ func NewPrometheusExporter(command string) *PrometheusExporter {
 }
 
 // Export writes metrics in Prometheus text format
-func (e *PrometheusExporter) Export(w io.Writer, metrics Metrics) {
+func (e *PrometheusExporter) Export(w io.Writer, metrics *Metrics) {
 	// Server info (as labels on other metrics)
 	e.writeComment(w, "Server information")
 	fmt.Fprintf(w, "# HELP radix_server_info Server information\n")

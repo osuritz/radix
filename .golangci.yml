@@ -1,0 +1,113 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - revive
+    - misspell
+    - unconvert
+    - unparam
+    - gocyclo
+    - gocritic
+    - gosec
+    - bodyclose
+    - nilerr
+    - nolintlint
+    - prealloc
+    - predeclared
+    - stylecheck
+    - thelper
+    - tparallel
+    - whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - (io.Closer).Close
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+
+  gocyclo:
+    min-complexity: 30
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+
+  gosec:
+    excludes:
+      - G404 # Insecure random number source (math/rand) - OK for non-crypto use
+
+  revive:
+    confidence: 0.8
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  stylecheck:
+    checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - gosec
+        - gocritic
+
+    # Exclude known issues in vendor directory
+    - path: vendor/
+      linters:
+        - all
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  sort-results: true

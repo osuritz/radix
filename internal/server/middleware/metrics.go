@@ -10,7 +10,7 @@ import (
 // metricsResponseWriter wraps http.ResponseWriter to capture response metrics
 type metricsResponseWriter struct {
 	http.ResponseWriter
-	status      int
+	status       int
 	bytesWritten int64
 }
 

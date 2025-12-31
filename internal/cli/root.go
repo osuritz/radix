@@ -1,3 +1,4 @@
+// Package cli implements the command-line interface for radix.
 package cli
 
 import (
@@ -42,7 +43,7 @@ Examples:
   radix validate ./radix.yml     # Validate configuration`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		// Load configuration
 		var err error
 		cfg, err = config.Load(cfgFile)

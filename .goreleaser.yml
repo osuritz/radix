@@ -1,0 +1,143 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: radix
+    main: ./cmd/radix
+    binary: radix
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/osuritz/radix/internal/version.Version={{.Version}}
+      - -X github.com/osuritz/radix/internal/version.Commit={{.Commit}}
+      - -X github.com/osuritz/radix/internal/version.Date={{.Date}}
+      - -X github.com/osuritz/radix/internal/version.BuiltBy=goreleaser
+
+archives:
+  - id: radix
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: osuritz
+    name: radix
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## radix {{ .Version }}
+
+    Multi-mode HTTP server for local development.
+
+  footer: |
+    **Full Changelog**: https://github.com/osuritz/radix/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ---
+
+    **Installation:**
+
+    ```bash
+    # macOS/Linux
+    curl -sSL https://github.com/osuritz/radix/releases/download/{{ .Tag }}/radix_{{ .Version }}_{{ .Os }}_{{ .Arch }}.tar.gz | tar xz
+
+    # Or download directly from the release assets above
+    ```
+
+brews:
+  - name: radix
+    repository:
+      owner: osuritz
+      name: homebrew-radix
+    folder: Formula
+    homepage: https://github.com/osuritz/radix
+    description: Multi-mode HTTP server for local development
+    license: MIT
+    test: |
+      system "#{bin}/radix version"
+    install: |
+      bin.install "radix"
+
+scoops:
+  - name: radix
+    repository:
+      owner: osuritz
+      name: scoop-radix
+    folder: bucket
+    homepage: https://github.com/osuritz/radix
+    description: Multi-mode HTTP server for local development
+    license: MIT
+
+nfpms:
+  - id: radix
+    package_name: radix
+    homepage: https://github.com/osuritz/radix
+    description: Multi-mode HTTP server for local development
+    maintainer: Olivier Suritz <olivier@example.com>
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin

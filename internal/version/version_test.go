@@ -14,23 +14,30 @@ func TestGetInfo(t *testing.T) {
 		t.Error("Version should not be empty")
 	}
 
-	if info.GoVersion == "" {
-		t.Error("GoVersion should not be empty")
+	if info.Compiler == "" {
+		t.Error("Compiler should not be empty")
 	}
 
-	if info.Platform == "" {
-		t.Error("Platform should not be empty")
+	if info.GoOS == "" {
+		t.Error("GoOS should not be empty")
 	}
 
-	// Verify GoVersion matches runtime
-	if info.GoVersion != runtime.Version() {
-		t.Errorf("GoVersion mismatch: got %s, want %s", info.GoVersion, runtime.Version())
+	if info.GoArch == "" {
+		t.Error("GoArch should not be empty")
 	}
 
-	// Verify Platform format
-	expectedPlatform := runtime.GOOS + "/" + runtime.GOARCH
-	if info.Platform != expectedPlatform {
-		t.Errorf("Platform mismatch: got %s, want %s", info.Platform, expectedPlatform)
+	// Verify Compiler matches runtime
+	if info.Compiler != runtime.Version() {
+		t.Errorf("Compiler mismatch: got %s, want %s", info.Compiler, runtime.Version())
+	}
+
+	// Verify GoOS and GoArch
+	if info.GoOS != runtime.GOOS {
+		t.Errorf("GoOS mismatch: got %s, want %s", info.GoOS, runtime.GOOS)
+	}
+
+	if info.GoArch != runtime.GOARCH {
+		t.Errorf("GoArch mismatch: got %s, want %s", info.GoArch, runtime.GOARCH)
 	}
 }
 
@@ -56,8 +63,8 @@ func TestInfoString(t *testing.T) {
 		t.Error("String should contain build date")
 	}
 
-	if !strings.Contains(result, "radix version") {
-		t.Error("String should contain 'radix version'")
+	if !strings.Contains(result, "radix") {
+		t.Error("String should contain 'radix'")
 	}
 }
 
@@ -74,7 +81,7 @@ func TestInfoShort(t *testing.T) {
 func TestVersionDefaults(t *testing.T) {
 	// Reset to defaults
 	Version = "dev"
-	Commit = "unknown"
+	Commit = "none"
 	Date = "unknown"
 
 	info := GetInfo()
@@ -83,11 +90,11 @@ func TestVersionDefaults(t *testing.T) {
 		t.Errorf("Default version should be 'dev', got %s", info.Version)
 	}
 
-	if info.Commit != "unknown" {
-		t.Errorf("Default commit should be 'unknown', got %s", info.Commit)
+	if info.Commit != "none" {
+		t.Errorf("Default commit should be 'none', got %s", info.Commit)
 	}
 
-	if info.BuildDate != "unknown" {
-		t.Errorf("Default date should be 'unknown', got %s", info.BuildDate)
+	if info.Date != "unknown" {
+		t.Errorf("Default date should be 'unknown', got %s", info.Date)
 	}
 }

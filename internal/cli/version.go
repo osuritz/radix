@@ -34,7 +34,7 @@ func init() {
 	versionCmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 }
 
-func runVersion(cmd *cobra.Command, args []string) error {
+func runVersion(cmd *cobra.Command, _ []string) error {
 	info := version.GetInfo()
 
 	if jsonOutput {

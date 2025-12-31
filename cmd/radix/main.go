@@ -1,3 +1,4 @@
+// Package main is the entry point for the radix CLI application.
 package main
 
 import (

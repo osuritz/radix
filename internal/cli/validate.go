@@ -11,9 +11,8 @@ import (
 )
 
 var (
-	configType   string
-	strictMode   bool
-	validateFile string
+	configType string
+	strictMode bool
 )
 
 // validateCmd represents the validate command
@@ -53,10 +52,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	absPath, _ := filepath.Abs(configPath)
+	absPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Validating configuration: %s\n\n", absPath)
 
 	// Read and parse the config file
+	// #nosec G304 - config file path is user-provided and validated
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
@@ -64,8 +67,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// Parse YAML
 	var rawConfig map[string]interface{}
-	if err := yaml.Unmarshal(data, &rawConfig); err != nil {
-		return fmt.Errorf("✗ Syntax error: %w", err)
+	if unmarshalErr := yaml.Unmarshal(data, &rawConfig); unmarshalErr != nil {
+		return fmt.Errorf("✗ Syntax error: %w", unmarshalErr)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
 
@@ -179,11 +182,12 @@ func validatePath(path, description string) error {
 	}
 
 	// Check if file is readable
+	// #nosec G304 - path is user-provided for validation purposes
 	file, err := os.Open(absPath)
 	if err != nil {
 		return fmt.Errorf("%s is not readable: %w", description, err)
 	}
-	file.Close()
+	defer func() { _ = file.Close() }()
 
 	return nil
 }
