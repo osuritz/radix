@@ -16,6 +16,11 @@ var (
 	host    string
 	verbose bool
 	noColor bool
+
+	// Metrics flags
+	metricsEnabled bool
+	metricsPath    string
+	metricsFormat  string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -58,6 +63,15 @@ Examples:
 		if cmd.Flags().Changed("no-color") {
 			cfg.NoColor = noColor
 		}
+		if cmd.Flags().Changed("metrics") {
+			cfg.Metrics.Enabled = metricsEnabled
+		}
+		if cmd.Flags().Changed("metrics-path") {
+			cfg.Metrics.Path = metricsPath
+		}
+		if cmd.Flags().Changed("metrics-format") {
+			cfg.Metrics.Format = metricsFormat
+		}
 
 		return nil
 	},
@@ -75,6 +89,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&host, "host", "localhost", "host to bind to")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose logging")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
+
+	// Metrics flags
+	rootCmd.PersistentFlags().BoolVar(&metricsEnabled, "metrics", true, "enable metrics endpoint")
+	rootCmd.PersistentFlags().StringVar(&metricsPath, "metrics-path", "/_metrics", "metrics endpoint path")
+	rootCmd.PersistentFlags().StringVar(&metricsFormat, "metrics-format", "json", "metrics output format (json, prometheus)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
