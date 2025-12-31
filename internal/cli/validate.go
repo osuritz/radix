@@ -187,7 +187,7 @@ func validatePath(path, description string) error {
 	if err != nil {
 		return fmt.Errorf("%s is not readable: %w", description, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	return nil
 }

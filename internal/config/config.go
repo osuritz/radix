@@ -206,7 +206,7 @@ func ValidateFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("config file is not readable: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	return nil
 }
