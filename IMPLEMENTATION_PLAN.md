@@ -13,10 +13,13 @@ radix/
 ├── internal/
 │   ├── cli/
 │   │   ├── root.go              # Root command
+│   │   ├── version.go           # Version command
+│   │   ├── validate.go          # Config validation command
 │   │   ├── serve.go             # Static file serving command
 │   │   ├── proxy.go             # Reverse proxy command
 │   │   ├── echo.go              # Request echo command
-│   │   └── mock.go              # API mocking command
+│   │   ├── mock.go              # API mocking command
+│   │   └── gencert.go           # Certificate generation command
 │   ├── server/
 │   │   ├── static.go            # Static file server implementation
 │   │   ├── proxy.go             # Reverse proxy implementation
@@ -26,9 +29,18 @@ radix/
 │   │       ├── logging.go       # Request logging
 │   │       ├── cors.go          # CORS handling
 │   │       └── recovery.go      # Panic recovery
+│   ├── tls/
+│   │   ├── generator.go         # Self-signed certificate generation
+│   │   ├── loader.go            # Certificate loading and validation
+│   │   └── config.go            # TLS configuration helpers
+│   ├── metrics/
+│   │   ├── collector.go         # Metrics collection
+│   │   ├── prometheus.go        # Prometheus format exporter
+│   │   └── histogram.go         # Response time histogram
 │   ├── config/
 │   │   ├── config.go            # Configuration structs
-│   │   └── loader.go            # Config file loading
+│   │   ├── loader.go            # Config file loading
+│   │   └── validator.go         # Configuration validation
 │   └── version/
 │       └── version.go           # Version info
 ├── pkg/                         # Public libraries (if needed)
@@ -82,7 +94,288 @@ github.com/spf13/viper
 - POSIX-compliant flags
 - Auto-completion generation (bash, zsh, fish, powershell)
 
-## 3. Command Structure & Design
+## 3. HTTPS/TLS Support Strategy
+
+HTTPS support will be implemented in phases to provide comprehensive TLS capabilities:
+
+### Phase 1: Certificate Generation
+**Command:** `radix gencert [flags]`
+
+Generate self-signed certificates for local development:
+
+```bash
+# Generate certificate for localhost
+radix gencert --host localhost --output ./certs
+
+# Generate for multiple domains/IPs
+radix gencert --host "localhost,127.0.0.1,*.local.dev" --output ./certs
+
+# Specify validity period
+radix gencert --host localhost --days 365 --output ./certs
+```
+
+Flags:
+- `--host`: Comma-separated list of hostnames/IPs (default: localhost)
+- `--output, -o`: Output directory for cert files (default: ./certs)
+- `--days`: Certificate validity in days (default: 365)
+- `--org`: Organization name (default: "Radix Development")
+- `--key-size`: RSA key size (default: 2048)
+
+Output files:
+- `cert.pem`: Certificate file
+- `key.pem`: Private key file
+- `ca.pem`: CA certificate (for importing into browser/system)
+
+Features:
+- RSA key generation (2048/4096 bit)
+- X.509 certificate generation
+- Subject Alternative Names (SAN) for multiple domains
+- CA certificate generation for trust chain
+
+### Phase 2: TLS Configuration Loading
+Add TLS support to all server commands via shared flags:
+
+Global TLS flags (available to serve, proxy, echo, mock):
+- `--tls`: Enable HTTPS (default: false)
+- `--cert`: Path to certificate file (required if --tls)
+- `--key`: Path to private key file (required if --tls)
+- `--ca`: Path to CA certificate (optional, for client cert verification)
+- `--client-auth`: Require client certificates (default: false)
+- `--tls-min-version`: Minimum TLS version (1.2, 1.3; default: 1.2)
+
+Example:
+```bash
+# Serve with HTTPS
+radix serve --tls --cert ./certs/cert.pem --key ./certs/key.pem
+
+# Proxy with client certificate verification
+radix proxy --target https://api.local \
+  --tls --cert ./certs/cert.pem --key ./certs/key.pem \
+  --ca ./certs/ca.pem --client-auth
+```
+
+### Phase 3: Per-Command TLS Integration
+
+#### 3.1 Serve Command TLS
+- HTTPS static file serving
+- HTTP/2 support (automatic with TLS 1.2+)
+- Optional HTTP-to-HTTPS redirect
+- HSTS header support
+
+Additional flags:
+- `--http-redirect`: Redirect HTTP to HTTPS (requires --http-port)
+- `--http-port`: HTTP port for redirects (default: 8080)
+- `--hsts`: Enable HSTS headers
+
+#### 3.2 Proxy Command TLS
+- HTTPS frontend (accepting requests)
+- HTTPS backend support (forwarding to HTTPS targets)
+- Mutual TLS (mTLS) for backend connections
+- Certificate pinning (optional)
+
+Additional flags:
+- `--backend-ca`: CA for verifying backend certificates
+- `--backend-cert`: Client cert for backend mTLS
+- `--backend-key`: Client key for backend mTLS
+
+#### 3.3 Echo Command TLS
+- HTTPS echo server
+- Display TLS connection info in response
+- Client certificate inspection
+
+Response includes:
+```json
+{
+  "tls": {
+    "enabled": true,
+    "version": "TLS 1.3",
+    "cipher_suite": "TLS_AES_128_GCM_SHA256",
+    "server_name": "localhost",
+    "client_cert": {
+      "subject": "CN=client",
+      "issuer": "CN=Radix CA",
+      "not_before": "2025-01-01T00:00:00Z",
+      "not_after": "2026-01-01T00:00:00Z"
+    }
+  }
+}
+```
+
+#### 3.4 Mock Command TLS
+- HTTPS mock server
+- Per-route TLS requirements
+- Client certificate-based routing
+
+Config enhancements:
+```yaml
+tls:
+  enabled: true
+  cert: ./certs/cert.pem
+  key: ./certs/key.pem
+  client_auth: optional
+
+routes:
+  - path: /api/public
+    method: GET
+    response:
+      body: '{"public": true}'
+
+  - path: /api/secure
+    method: GET
+    require_client_cert: true
+    response:
+      body: '{"authenticated": true, "cn": "{{client.cn}}"}'
+```
+
+### TLS Implementation Details
+
+**Package Structure:**
+```go
+// internal/tls/generator.go
+type CertGenerator struct {
+    Hosts    []string
+    ValidFor time.Duration
+    KeySize  int
+    Org      string
+}
+
+func (g *CertGenerator) Generate() (*Certificate, error)
+
+// internal/tls/loader.go
+type TLSLoader struct {
+    CertFile   string
+    KeyFile    string
+    CAFile     string
+    MinVersion uint16
+}
+
+func (l *TLSLoader) LoadConfig() (*tls.Config, error)
+
+// internal/tls/config.go
+func NewServerConfig(certFile, keyFile, caFile string, clientAuth bool) (*tls.Config, error)
+func NewClientConfig(certFile, keyFile, caFile string) (*tls.Config, error)
+```
+
+**Security Considerations:**
+- Strong cipher suites by default
+- TLS 1.2 minimum (configurable to 1.3-only)
+- Perfect Forward Secrecy (PFS) cipher suites preferred
+- No SSLv3, TLS 1.0, TLS 1.1 support
+- Certificate validation by default (skip-verify only with flag)
+
+### Metrics & Observability
+
+All server commands (serve, proxy, echo, mock) will expose a metrics endpoint for monitoring and observability.
+
+**Metrics Endpoint:** `/_metrics` or `/__radix/metrics`
+
+**Global Flags:**
+- `--metrics`: Enable metrics endpoint (default: true)
+- `--metrics-path`: Metrics endpoint path (default: /_metrics)
+- `--metrics-format`: Output format (json, prometheus; default: json)
+
+**Metrics Collected:**
+```json
+{
+  "server": {
+    "command": "serve",
+    "uptime_seconds": 3600,
+    "start_time": "2025-12-31T00:00:00Z",
+    "version": "1.0.0"
+  },
+  "requests": {
+    "total": 1500,
+    "success": 1450,
+    "errors": 50,
+    "rate_per_second": 0.42
+  },
+  "status_codes": {
+    "200": 1200,
+    "304": 250,
+    "404": 40,
+    "500": 10
+  },
+  "methods": {
+    "GET": 1400,
+    "POST": 80,
+    "PUT": 15,
+    "DELETE": 5
+  },
+  "response_times": {
+    "min_ms": 1,
+    "max_ms": 523,
+    "avg_ms": 45,
+    "p50_ms": 32,
+    "p95_ms": 120,
+    "p99_ms": 280
+  },
+  "bandwidth": {
+    "bytes_sent": 15728640,
+    "bytes_received": 524288,
+    "avg_request_size_bytes": 349,
+    "avg_response_size_bytes": 10485
+  }
+}
+```
+
+**Command-Specific Metrics:**
+
+*Serve Command:*
+- File cache hit/miss ratio
+- Compression ratios
+- Most requested files
+- Static assets served
+
+*Proxy Command:*
+- Backend response times
+- Backend errors
+- Connection pool stats
+- WebSocket connections (active, total)
+
+*Echo Command:*
+- Average delay applied
+- Request body sizes
+- Custom response usage
+
+*Mock Command:*
+- Route match statistics
+- Template rendering times
+- Config reload count
+- Failed route matches
+
+**Prometheus Format Support:**
+```prometheus
+# HELP radix_requests_total Total number of HTTP requests
+# TYPE radix_requests_total counter
+radix_requests_total{command="serve",status="200",method="GET"} 1200
+
+# HELP radix_response_time_seconds HTTP request duration
+# TYPE radix_response_time_seconds histogram
+radix_response_time_seconds_bucket{le="0.01"} 500
+radix_response_time_seconds_bucket{le="0.05"} 1100
+radix_response_time_seconds_bucket{le="0.1"} 1350
+```
+
+**Implementation:**
+```go
+// internal/metrics/collector.go
+type Collector struct {
+    StartTime      time.Time
+    TotalRequests  atomic.Uint64
+    StatusCodes    sync.Map  // map[int]uint64
+    Methods        sync.Map  // map[string]uint64
+    ResponseTimes  *Histogram
+}
+
+func (c *Collector) RecordRequest(status int, method string, duration time.Duration)
+func (c *Collector) Snapshot() *Metrics
+func (c *Collector) Handler() http.HandlerFunc
+
+// internal/metrics/prometheus.go
+func (c *Collector) PrometheusHandler() http.HandlerFunc
+```
+
+## 4. Command Structure & Design
 
 ### Root Command
 ```bash
@@ -98,7 +391,65 @@ Global flags (available to all commands):
 
 ### Commands
 
-#### 3.1 Serve Command
+#### 3.1 Version Command
+```bash
+radix version [flags]
+```
+
+Purpose: Display version information
+
+Flags:
+- `--short`: Show only version number
+- `--json`: Output as JSON
+
+Output:
+```json
+{
+  "version": "1.0.0",
+  "commit": "abc123",
+  "build_date": "2025-12-31",
+  "go_version": "go1.22.0",
+  "platform": "linux/amd64"
+}
+```
+
+#### 3.2 Validate Command
+```bash
+radix validate [config-file] [flags]
+```
+
+Purpose: Validate configuration files
+
+Flags:
+- `--config, -c`: Config file to validate (default: ./radix.yml)
+- `--type`: Config type (main, mock-routes; default: auto-detect)
+- `--strict`: Strict validation mode (fail on warnings)
+
+Features:
+- YAML/JSON syntax validation
+- Schema validation
+- Check file paths exist
+- Validate TLS certificate paths
+- Validate port ranges
+- Check for conflicting settings
+- Warnings for deprecated options
+
+Output:
+```
+✓ Configuration is valid: ./radix.yml
+
+Checked:
+  - Syntax: OK
+  - Schema: OK
+  - File paths: OK (cert.pem, key.pem found)
+  - Port: 8080 (available)
+  - TLS config: Valid
+
+Warnings:
+  - Consider setting tls.min_version to "1.3" for better security
+```
+
+#### 3.3 Serve Command
 ```bash
 radix serve [directory] [flags]
 ```
@@ -121,7 +472,7 @@ Features:
 - ETag generation
 - Compression (gzip, brotli)
 
-#### 3.2 Proxy Command
+#### 3.4 Proxy Command
 ```bash
 radix proxy [target] [flags]
 ```
@@ -144,7 +495,7 @@ Features:
 - Path rewriting
 - Load balancing (future: multiple targets)
 
-#### 3.3 Echo Command
+#### 3.5 Echo Command
 ```bash
 radix echo [flags]
 ```
@@ -176,7 +527,7 @@ Response format:
 }
 ```
 
-#### 3.4 Mock Command
+#### 3.6 Mock Command
 ```bash
 radix mock [config-file] [flags]
 ```
@@ -221,6 +572,15 @@ Features:
 - Hot reload on config changes
 - Request matching (method, headers, query, body)
 
+#### 3.7 GenCert Command
+```bash
+radix gencert [flags]
+```
+
+Purpose: Generate self-signed TLS certificates for local development
+
+See **Section 3: HTTPS/TLS Support Strategy - Phase 1** for full details.
+
 ## 4. Shared Configuration System
 
 ### Configuration Priority (highest to lowest):
@@ -236,17 +596,34 @@ port: 8080
 host: localhost
 verbose: false
 
+# TLS settings (applies to all commands)
+tls:
+  enabled: false
+  cert: ./certs/cert.pem
+  key: ./certs/key.pem
+  ca: ./certs/ca.pem
+  client_auth: false
+  min_version: "1.2"  # or "1.3"
+
 # Command-specific configs
 serve:
   dir: ./public
   spa: true
   cors: true
   gzip: true
+  # TLS-specific for serve
+  http_redirect: false
+  http_port: 8080
+  hsts: false
 
 proxy:
   target: http://localhost:3000
   timeout: 30s
   websocket: true
+  # Backend TLS settings
+  backend_ca: ./certs/backend-ca.pem
+  backend_cert: ./certs/client-cert.pem
+  backend_key: ./certs/client-key.pem
 
 echo:
   delay: 0
@@ -259,45 +636,162 @@ mock:
 
 ## 5. Implementation Phases
 
-### Phase 1: Foundation (Week 1)
+### Phase 1: Foundation
 - [ ] Initialize Go module
 - [ ] Set up project structure
 - [ ] Implement root command with Cobra
-- [ ] Add version command
+- [ ] Implement version command
+  - [ ] Version info struct
+  - [ ] Build-time variable injection
+  - [ ] JSON output format
+  - [ ] Short format flag
 - [ ] Set up configuration loading (Viper)
+  - [ ] YAML/JSON parsing
+  - [ ] Environment variable support
+  - [ ] Config file discovery (./, ~/, /etc/)
+- [ ] Implement validate command
+  - [ ] Config file schema validation
+  - [ ] File path existence checks
+  - [ ] Port range validation
+  - [ ] TLS certificate validation
+  - [ ] Warning system for best practices
 - [ ] Implement logging middleware
 - [ ] Set up testing framework
 
-### Phase 2: Core Commands (Week 2-3)
-- [ ] Implement `serve` command
+### Phase 2: Metrics Infrastructure
+- [ ] Implement `internal/metrics/collector.go`
+  - [ ] Request counter (atomic operations)
+  - [ ] Status code tracking
+  - [ ] HTTP method tracking
+  - [ ] Response time histogram
+  - [ ] Bandwidth tracking
+- [ ] Implement `internal/metrics/histogram.go`
+  - [ ] Percentile calculations (p50, p95, p99)
+  - [ ] Min/max/avg tracking
+- [ ] Implement `internal/metrics/prometheus.go`
+  - [ ] Prometheus text format exporter
+  - [ ] Counter and histogram metrics
+  - [ ] Label support
+- [ ] Add metrics middleware
+  - [ ] Request wrapping
+  - [ ] Response wrapping for size tracking
+  - [ ] Automatic metric recording
+- [ ] Create metrics endpoint handler
+- [ ] Add global metrics flags (--metrics, --metrics-path, --metrics-format)
+- [ ] Tests for metrics collection
+
+### Phase 3: TLS Infrastructure
+- [ ] **TLS Phase 1: Certificate Generation**
+  - [ ] Implement `internal/tls/generator.go` for self-signed cert generation
+  - [ ] Create `radix gencert` command
+  - [ ] Support RSA key generation (2048/4096 bit)
+  - [ ] Implement X.509 certificate with SAN support
+  - [ ] Generate CA certificate for trust chain
+  - [ ] Add tests for certificate generation
+  - [ ] Document certificate usage
+
+- [ ] **TLS Phase 2: Configuration & Loading**
+  - [ ] Implement `internal/tls/loader.go` for cert loading
+  - [ ] Implement `internal/tls/config.go` for TLS config helpers
+  - [ ] Add global TLS flags (--tls, --cert, --key, --ca, --client-auth)
+  - [ ] Support TLS version configuration (1.2, 1.3)
+  - [ ] Implement cipher suite configuration
+  - [ ] Add certificate validation
+  - [ ] Create TLS configuration tests
+
+### Phase 4: Core Commands (HTTP)
+- [ ] Implement `serve` command (HTTP)
   - [ ] Basic static file serving
   - [ ] Directory listing
   - [ ] Compression support
   - [ ] SPA mode
-- [ ] Implement `proxy` command
+  - [ ] CORS support
+  - [ ] Integrate metrics middleware
+  - [ ] Add serve-specific metrics (cache hits, file types, etc.)
+  - [ ] Tests for serve command
+
+- [ ] Implement `proxy` command (HTTP)
   - [ ] Basic reverse proxy
   - [ ] Header manipulation
   - [ ] Path rewriting
   - [ ] WebSocket support
+  - [ ] Integrate metrics middleware
+  - [ ] Add proxy-specific metrics (backend response times, errors, etc.)
+  - [ ] Tests for proxy command
 
-### Phase 3: Advanced Commands (Week 3-4)
-- [ ] Implement `echo` command
-  - [ ] Request inspection
+### Phase 5: Core Commands (HTTPS)
+- [ ] **TLS Phase 3a: Serve Command TLS**
+  - [ ] Add HTTPS support to serve command
+  - [ ] Implement HTTP/2 support
+  - [ ] Add HTTP-to-HTTPS redirect option
+  - [ ] Implement HSTS headers
+  - [ ] Integration tests with TLS
+
+- [ ] **TLS Phase 3b: Proxy Command TLS**
+  - [ ] Add HTTPS frontend to proxy
+  - [ ] Implement HTTPS backend support
+  - [ ] Add mutual TLS (mTLS) for backends
+  - [ ] Backend certificate verification
+  - [ ] Integration tests with TLS
+
+### Phase 6: Advanced Commands (HTTP)
+- [ ] Implement `echo` command (HTTP)
+  - [ ] Request inspection and formatting
   - [ ] Configurable responses
   - [ ] Delay simulation
-- [ ] Implement `mock` command
-  - [ ] YAML config parsing
-  - [ ] Route matching
-  - [ ] Template responses
-  - [ ] File watching
+  - [ ] JSON output formatting
+  - [ ] Integrate metrics middleware
+  - [ ] Add echo-specific metrics (delays, custom responses, etc.)
+  - [ ] Tests for echo command
 
-### Phase 4: Polish & Release (Week 4-5)
+- [ ] Implement `mock` command (HTTP)
+  - [ ] YAML config parsing
+  - [ ] Route matching engine
+  - [ ] Template responses ({{uuid}}, {{now}}, etc.)
+  - [ ] File watching and hot reload
+  - [ ] Integrate metrics middleware
+  - [ ] Add mock-specific metrics (route matches, template renders, config reloads)
+  - [ ] Tests for mock command
+
+### Phase 7: Advanced Commands (HTTPS)
+- [ ] **TLS Phase 3c: Echo Command TLS**
+  - [ ] Add HTTPS support to echo
+  - [ ] Display TLS connection info in responses
+  - [ ] Client certificate inspection
+  - [ ] Integration tests with client certs
+
+- [ ] **TLS Phase 3d: Mock Command TLS**
+  - [ ] Add HTTPS support to mock
+  - [ ] Per-route TLS requirements
+  - [ ] Client certificate-based routing
+  - [ ] Template support for client cert fields
+  - [ ] Integration tests with complex TLS scenarios
+
+### Phase 8: Polish & Release
 - [ ] Comprehensive testing (unit + integration)
+  - [ ] Achieve >80% code coverage
+  - [ ] End-to-end TLS testing
+  - [ ] Cross-platform testing
 - [ ] Documentation
+  - [ ] README with quickstart
+  - [ ] Command documentation
+  - [ ] TLS setup guide
+  - [ ] Example configurations
 - [ ] Examples
+  - [ ] Basic usage examples for each command
+  - [ ] TLS configuration examples
+  - [ ] Mock API examples
 - [ ] CI/CD setup (GitHub Actions)
+  - [ ] Lint and test automation
+  - [ ] Security scanning (gosec, govulncheck)
+  - [ ] Multi-platform builds
 - [ ] Release automation (GoReleaser)
-- [ ] Cross-platform builds (Linux, macOS, Windows)
+  - [ ] Cross-platform binaries
+  - [ ] Archive generation
+  - [ ] Checksums and signatures
+- [ ] Distribution
+  - [ ] GitHub releases
+  - [ ] Installation documentation
 
 ## 6. Code Quality Standards
 
@@ -425,15 +919,40 @@ To keep scope manageable:
 
 These can be considered for future versions based on user feedback.
 
-## 10. Success Metrics
+## 10. Platform Support & Priorities
+
+### Platform Priority (in order):
+1. **macOS** (primary development platform)
+   - Intel (amd64)
+   - Apple Silicon (arm64)
+2. **Windows** (secondary)
+   - Windows 10/11 (amd64)
+   - Windows on ARM (arm64)
+3. **Linux** (tertiary)
+   - amd64
+   - arm64 (Raspberry Pi, cloud instances)
+   - arm (32-bit Raspberry Pi)
+
+### Testing Priority:
+- macOS: Comprehensive testing on every build
+- Windows: Regular testing, CI validation
+- Linux: CI validation, community testing
+
+### Distribution:
+- macOS: Homebrew tap (primary), direct download
+- Windows: Direct download (.zip), potential Chocolatey/Scoop
+- Linux: Direct download (.tar.gz), GitHub releases
+- All platforms: `go install` support
+
+## 11. Success Metrics
 
 - **Installation**: `go install github.com/osuritz/radix/cmd/radix@latest`
 - **Usage**: `radix serve` starts server in <100ms
 - **Size**: Binary <10MB (uncompressed)
 - **Performance**: Handle 1000+ req/s for static serving
-- **Compatibility**: Go 1.21+ on Linux, macOS, Windows
+- **Compatibility**: Go 1.21+ on macOS, Windows, Linux
 
-## 11. Example Usage Scenarios
+## 12. Example Usage Scenarios
 
 ### Static Development Server
 ```bash
@@ -477,20 +996,36 @@ radix mock --routes ./api-mocks.yml --watch
 radix mock --routes ./api-mocks.yml --fail-rate 10
 ```
 
-## 12. Next Steps
+## 13. Next Steps
 
-1. **Review and approve this plan**
+1. **Review and approve this plan** ✓
 2. **Set up initial project structure**
 3. **Initialize Go module and dependencies**
 4. **Implement root command and configuration**
-5. **Start with `serve` command (most straightforward)**
-6. **Iterate based on testing and feedback**
+5. **Start with foundation phase (version, validate, config)**
+6. **Implement metrics infrastructure**
+7. **Implement TLS infrastructure (gencert, loading)**
+8. **Build core commands (serve, proxy) with HTTP**
+9. **Add HTTPS support to core commands**
+10. **Build advanced commands (echo, mock)**
+11. **Polish, test, and release**
 
 ---
 
-**Questions to Consider:**
-1. Do you want HTTPS/TLS support in v1.0?
-2. Should there be a "combo" mode running multiple servers?
-3. Any specific platform priority (Linux/macOS/Windows)?
-4. Homebrew/apt/snap distribution plans?
-5. Docker image needed?
+## 14. Design Decisions Summary
+
+**✓ Confirmed for v1.0:**
+- HTTPS/TLS support (phased: generate certs → load certs → integrate per command)
+- Metrics endpoint (all commands, JSON + Prometheus formats)
+- Config validation command
+- Platform priority: macOS > Windows > Linux
+- Distribution: Homebrew (macOS), direct downloads (all), `go install`
+
+**✗ Deferred to future versions:**
+- Interactive config generation mode
+- Combo mode (multiple servers simultaneously)
+- Docker images
+- Advanced package managers (apt, snap, chocolatey)
+- Authentication/authorization
+- Database integration
+- Clustering/distributed mode
