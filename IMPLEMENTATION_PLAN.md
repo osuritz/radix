@@ -822,6 +822,19 @@ mock:
   - [ ] Integration tests with complex TLS scenarios
 
 ### Phase 9: Polish & Release
+- [ ] **Binary Signing & Security (Priority: GPG first)**
+  - [ ] **GPG Signing (All Platforms)** - Cross-platform, no cost
+    - [ ] Set up GPG key for release signing
+    - [ ] Add GPG_FINGERPRINT to GitHub secrets
+    - [ ] Configure GoReleaser for GPG signing of checksums
+    - [ ] Update release workflow with GPG signing
+    - [ ] Document signature verification in README
+    - [ ] Add public key to repository/docs
+  - [ ] macOS: Apple Developer ID codesigning setup (requires Apple Developer account)
+  - [ ] macOS: Notarization with gon (requires notarization service)
+  - [ ] Windows: Authenticode signing (requires code signing certificate)
+  - [ ] Update release workflow with all signing methods
+  - [ ] Create comprehensive signature verification documentation
 - [ ] Comprehensive testing (unit + integration)
   - [ ] Achieve >80% code coverage
   - [ ] End-to-end TLS testing
@@ -832,17 +845,12 @@ mock:
   - [ ] TLS setup guide
   - [ ] Example configurations
   - [ ] Contributing guidelines
+  - [ ] Binary verification guide (GPG)
 - [ ] Examples
   - [ ] Basic usage examples for each command
   - [ ] TLS configuration examples
   - [ ] Mock API examples
   - [ ] Real-world use case examples
-- [ ] Binary signing (if not in Phase 3)
-  - [ ] macOS: Apple Developer ID codesigning setup
-  - [ ] macOS: Notarization with gon
-  - [ ] Windows: Authenticode signing (osslsigncode or signtool)
-  - [ ] Linux/All: GPG signing for checksums
-  - [ ] Document signature verification
 - [ ] Distribution enhancements
   - [ ] Homebrew tap setup
   - [ ] Chocolatey package (Windows)
@@ -1257,17 +1265,21 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
 1. **Review and approve this plan** ✓
 2. **Phase 1: Foundation** ✓ (completed)
 3. **Phase 2: Metrics Infrastructure** ✓ (completed)
-4. **Phase 3: CI/CD Pipeline & Automation** ← Current
-   - Set up GitHub Actions workflows
-   - Configure linters and code quality tools
-   - Implement semantic versioning
-   - Set up GoReleaser for automated releases
-5. **Phase 4: TLS Infrastructure** (gencert, loading)
+4. **Phase 3: CI/CD Pipeline & Automation** ✓ (completed)
+   - Set up GitHub Actions workflows ✓
+   - Configure linters and code quality tools ✓
+   - Implement semantic versioning ✓
+   - Set up GoReleaser for automated releases ✓
+5. **Phase 4: TLS Infrastructure** ← Current
+   - gencert command implementation
+   - TLS configuration loading
 6. **Phase 5: Core Commands (HTTP)** (serve, proxy)
 7. **Phase 6: Core Commands (HTTPS)**
 8. **Phase 7: Advanced Commands (HTTP)** (echo, mock)
 9. **Phase 8: Advanced Commands (HTTPS)**
 10. **Phase 9: Polish & Release**
+    - Priority: GPG signing first (cross-platform, no cost)
+    - Optional: Platform-specific signing (macOS, Windows)
 
 ---
 
