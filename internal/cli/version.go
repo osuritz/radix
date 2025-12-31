@@ -34,7 +34,7 @@ func init() {
 	versionCmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 }
 
-func runVersion(cmd *cobra.Command, args []string) error {
+func runVersion(cmd *cobra.Command, _ []string) error {
 	info := version.GetInfo()
 
 	if jsonOutput {
@@ -49,11 +49,11 @@ func runVersion(cmd *cobra.Command, args []string) error {
 
 	if shortVersion {
 		// Short version output
-		fmt.Fprintln(cmd.OutOrStdout(), info.Short())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), info.Short())
 		return nil
 	}
 
 	// Full version output
-	fmt.Fprintln(cmd.OutOrStdout(), info.String())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), info.String())
 	return nil
 }

@@ -8,13 +8,13 @@ import (
 
 // Histogram tracks response time distribution
 type Histogram struct {
-	mu       sync.RWMutex
-	values   []float64 // Response times in milliseconds
-	maxSize  int       // Maximum number of values to keep
-	min      float64
-	max      float64
-	sum      float64
-	count    uint64
+	mu      sync.RWMutex
+	values  []float64 // Response times in milliseconds
+	maxSize int       // Maximum number of values to keep
+	min     float64
+	max     float64
+	sum     float64
+	count   uint64
 }
 
 // NewHistogram creates a new histogram with a maximum size
@@ -52,11 +52,12 @@ func (h *Histogram) Record(duration time.Duration) {
 		h.values = append(h.values, ms)
 	} else {
 		// Circular buffer: replace oldest value
+		// #nosec G115 - maxSize is controlled and count overflow is acceptable for modulo
 		h.values[int(h.count-1)%h.maxSize] = ms
 	}
 }
 
-// Snapshot returns a snapshot of the current histogram statistics
+// HistogramSnapshot contains statistical data from a histogram.
 type HistogramSnapshot struct {
 	Min   float64 `json:"min_ms"`
 	Max   float64 `json:"max_ms"`

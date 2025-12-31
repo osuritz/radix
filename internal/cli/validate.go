@@ -11,9 +11,8 @@ import (
 )
 
 var (
-	configType   string
-	strictMode   bool
-	validateFile string
+	configType string
+	strictMode bool
 )
 
 // validateCmd represents the validate command
@@ -53,10 +52,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	absPath, _ := filepath.Abs(configPath)
-	fmt.Fprintf(cmd.OutOrStdout(), "Validating configuration: %s\n\n", absPath)
+	absPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve path: %w", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Validating configuration: %s\n\n", absPath)
 
 	// Read and parse the config file
+	// #nosec G304 - config file path is user-provided and validated
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
@@ -67,14 +70,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err := yaml.Unmarshal(data, &rawConfig); err != nil {
 		return fmt.Errorf("✗ Syntax error: %w", err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
 
 	// Load config through Viper to validate structure
 	cfg, err := config.Load(absPath)
 	if err != nil {
 		return fmt.Errorf("✗ Schema validation failed: %w", err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "✓ Schema: OK")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ Schema: OK")
 
 	// Validate file paths if TLS is enabled
 	warnings := []string{}
@@ -104,7 +107,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fmt.Fprintln(cmd.OutOrStdout(), "✓ TLS certificates: OK")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "✓ TLS certificates: OK")
 
 		// Check TLS version
 		if cfg.TLS.MinVersion != "1.2" && cfg.TLS.MinVersion != "1.3" {
@@ -121,7 +124,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return fmt.Errorf("✗ Invalid port: %d (must be 1-65535)", cfg.Port)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", cfg.Port)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", cfg.Port)
 
 	// Validate serve directory if specified
 	if cfg.Serve.Dir != "" && cfg.Serve.Dir != "." {
@@ -141,9 +144,9 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// Print warnings
 	if len(warnings) > 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
 		for _, warning := range warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
 		}
 
 		if strictMode {
@@ -151,7 +154,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Configuration is valid: %s\n", absPath)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Configuration is valid: %s\n", absPath)
 	return nil
 }
 
@@ -179,11 +182,12 @@ func validatePath(path, description string) error {
 	}
 
 	// Check if file is readable
+	// #nosec G304 - path is user-provided for validation purposes
 	file, err := os.Open(absPath)
 	if err != nil {
 		return fmt.Errorf("%s is not readable: %w", description, err)
 	}
-	file.Close()
+	_ = file.Close()
 
 	return nil
 }

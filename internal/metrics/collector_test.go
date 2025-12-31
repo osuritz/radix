@@ -162,7 +162,7 @@ func TestCollectorBandwidth(t *testing.T) {
 	}
 
 	// Check averages
-	expectedAvgReq := 200.0  // 600 / 3
+	expectedAvgReq := 200.0   // 600 / 3
 	expectedAvgResp := 2000.0 // 6000 / 3
 
 	if snapshot.Bandwidth.AvgRequestSizeBytes != expectedAvgReq {

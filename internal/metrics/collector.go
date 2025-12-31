@@ -1,3 +1,4 @@
+// Package metrics provides HTTP request metrics collection and reporting.
 package metrics
 
 import (
@@ -15,11 +16,11 @@ type Collector struct {
 	version   string
 
 	// Atomic counters
-	totalRequests   atomic.Uint64
-	totalSuccess    atomic.Uint64
-	totalErrors     atomic.Uint64
-	bytesSent       atomic.Uint64
-	bytesReceived   atomic.Uint64
+	totalRequests atomic.Uint64
+	totalSuccess  atomic.Uint64
+	totalErrors   atomic.Uint64
+	bytesSent     atomic.Uint64
+	bytesReceived atomic.Uint64
 
 	// Maps for tracking counts (protected by RWMutex for reads, using sync.Map for writes)
 	statusCodes sync.Map // map[int]uint64
@@ -87,12 +88,12 @@ func (c *Collector) incrementMapCounter(m *sync.Map, key interface{}) {
 
 // Metrics represents the complete metrics snapshot
 type Metrics struct {
-	Server        ServerMetrics        `json:"server"`
-	Requests      RequestMetrics       `json:"requests"`
-	StatusCodes   map[string]uint64    `json:"status_codes"`
-	Methods       map[string]uint64    `json:"methods"`
-	ResponseTimes HistogramSnapshot    `json:"response_times"`
-	Bandwidth     BandwidthMetrics     `json:"bandwidth"`
+	Server        ServerMetrics     `json:"server"`
+	Requests      RequestMetrics    `json:"requests"`
+	StatusCodes   map[string]uint64 `json:"status_codes"`
+	Methods       map[string]uint64 `json:"methods"`
+	ResponseTimes HistogramSnapshot `json:"response_times"`
+	Bandwidth     BandwidthMetrics  `json:"bandwidth"`
 }
 
 // ServerMetrics contains server information
@@ -105,18 +106,18 @@ type ServerMetrics struct {
 
 // RequestMetrics contains request statistics
 type RequestMetrics struct {
-	Total          uint64  `json:"total"`
-	Success        uint64  `json:"success"`
-	Errors         uint64  `json:"errors"`
-	RatePerSecond  float64 `json:"rate_per_second"`
+	Total         uint64  `json:"total"`
+	Success       uint64  `json:"success"`
+	Errors        uint64  `json:"errors"`
+	RatePerSecond float64 `json:"rate_per_second"`
 }
 
 // BandwidthMetrics contains bandwidth statistics
 type BandwidthMetrics struct {
-	BytesSent             uint64  `json:"bytes_sent"`
-	BytesReceived         uint64  `json:"bytes_received"`
-	AvgRequestSizeBytes   float64 `json:"avg_request_size_bytes,omitempty"`
-	AvgResponseSizeBytes  float64 `json:"avg_response_size_bytes,omitempty"`
+	BytesSent            uint64  `json:"bytes_sent"`
+	BytesReceived        uint64  `json:"bytes_received"`
+	AvgRequestSizeBytes  float64 `json:"avg_request_size_bytes,omitempty"`
+	AvgResponseSizeBytes float64 `json:"avg_response_size_bytes,omitempty"`
 }
 
 // Snapshot returns a snapshot of the current metrics
@@ -182,22 +183,20 @@ func (c *Collector) Snapshot() Metrics {
 
 // Handler returns an HTTP handler for the metrics endpoint
 func (c *Collector) Handler(format string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		snapshot := c.Snapshot()
 
 		switch format {
 		case "prometheus":
-			c.writePrometheus(w, snapshot)
-		case "json":
-			fallthrough
-		default:
-			c.writeJSON(w, snapshot)
+			c.writePrometheus(w, &snapshot)
+		default: // json and others
+			c.writeJSON(w, &snapshot)
 		}
 	}
 }
 
 // writeJSON writes metrics in JSON format
-func (c *Collector) writeJSON(w http.ResponseWriter, metrics Metrics) {
+func (c *Collector) writeJSON(w http.ResponseWriter, metrics *Metrics) {
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
@@ -207,7 +206,7 @@ func (c *Collector) writeJSON(w http.ResponseWriter, metrics Metrics) {
 }
 
 // writePrometheus writes metrics in Prometheus text format
-func (c *Collector) writePrometheus(w http.ResponseWriter, metrics Metrics) {
+func (c *Collector) writePrometheus(w http.ResponseWriter, metrics *Metrics) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 
 	// Use the dedicated Prometheus exporter
