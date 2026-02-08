@@ -84,11 +84,25 @@ radix serve [directory] [flags]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--index` | `-i` | string | `index.html` | Default index file |
-| `--spa` | | bool | `false` | SPA mode: serve index.html for all 404s |
-| `--spa-index` | | string | `index.html` | Index file for SPA fallback |
+| `--index` | `-i` | []string | `index.html,index.htm` | Index files to try (in order) |
+| `--spa` | | bool | `false` | SPA mode: serve spa-index for non-file 404s |
+| `--spa-index` | | string | `index.html` | Index file for SPA fallback (from root) |
+| `--spa-exclude` | | []string | `[]` | Paths to exclude from SPA fallback (return 404) |
+| `--not-found` | | string | `404` | 404 behavior: `404`, `spa`, `page:/path` |
 | `--trailing-slash` | | string | `auto` | Trailing slash handling: `add`, `remove`, `auto` |
 | `--clean-urls` | | bool | `false` | Serve `/about` from `/about.html` |
+
+**Index file resolution** (like nginx `index` directive):
+- When a directory is requested, try each index file in order
+- Default: try `index.html`, then `index.htm`
+- Applies to root and all subdirectories
+- Example: `/docs/` tries `/docs/index.html`, then `/docs/index.htm`
+
+**SPA mode** (like nginx `try_files $uri $uri/ /index.html`):
+- When enabled with `--spa`, non-existent paths serve the spa-index
+- Files with extensions (`.js`, `.css`, `.png`) still return 404 if missing
+- Paths without extensions (like `/users/123`) serve the SPA index
+- API paths can be excluded (see `--spa-exclude`)
 
 #### Directory Listing
 
@@ -166,11 +180,18 @@ serve:
   port: 8080
   host: localhost
 
-  # Index & Routing
-  index: index.html
-  spa: true
-  spa_index: index.html
-  trailing_slash: auto  # add, remove, auto
+  # Index & Routing (nginx-style: tries each in order per directory)
+  index:
+    - index.html
+    - index.htm
+  spa:
+    enabled: true
+    index: index.html        # Fallback file (relative to root)
+    exclude:                 # Paths that should 404, not fallback
+      - /api/*
+      - /static/*
+  not_found: spa             # 404, spa, or page:/errors/404.html
+  trailing_slash: auto       # add, remove, auto
   clean_urls: false
 
   # Directory Listing
@@ -279,13 +300,40 @@ var extraMimeTypes = map[string]string{
 }
 ```
 
+#### Index File Resolution
+
+For directory requests (like nginx `index` directive):
+
+```
+Request: /docs/
+1. Try /docs/index.html → if exists, serve it
+2. Try /docs/index.htm  → if exists, serve it
+3. If dir_listing enabled → show directory listing
+4. Otherwise → 404
+```
+
+This applies to every subdirectory, not just root.
+
 #### SPA Mode Behavior
 
-When `--spa` is enabled:
-1. Try to serve the exact file path
-2. If file not found and path has no extension, serve `spa_index`
-3. If file not found and path has extension, return 404
-4. API paths (configurable, default `/api/*`) always return 404
+Modeled after nginx `try_files $uri $uri/ /index.html`:
+
+```
+Request: /users/123/profile
+
+1. Try exact path: /users/123/profile (file) → not found
+2. Try as directory: /users/123/profile/ with index → not found
+3. Check if path has file extension (.js, .css, etc.)
+   - If YES and not found → 404 (it's a missing asset)
+   - If NO → serve SPA index from root
+4. Check exclusion patterns (e.g., /api/*)
+   - If matches exclusion → 404 (let API handle its own errors)
+   - Otherwise → serve SPA index
+```
+
+**Why extension matters**: Requests like `/app.js` or `/styles.css` are clearly
+asset requests - if they're missing, the developer needs a 404 to debug.
+Requests like `/users/123` are clearly routes that the SPA should handle.
 
 #### Compression Strategy
 
