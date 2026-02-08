@@ -33,6 +33,19 @@ Radix provides five primary server commands, each designed for specific local de
 | `mock` | API mocking | Frontend development without backend |
 | `gencert` | Certificate generation | TLS/HTTPS local development |
 
+### Target Audience
+
+Radix is designed for **local development use** by:
+- Software engineers and developers
+- Coding agents and AI assistants
+- QA engineers testing frontend/backend integration
+
+**Radix is NOT intended for production traffic.** This influences design decisions:
+- Simplicity over maximum performance
+- Developer experience over operational complexity
+- Fast startup over extensive optimization
+- Reasonable defaults over exhaustive configurability
+
 ### Design Principles
 
 1. **Zero Configuration Start**: Every command works with sensible defaults
@@ -40,6 +53,7 @@ Radix provides five primary server commands, each designed for specific local de
 3. **Composable**: Commands can be combined via config file for complex scenarios
 4. **Observable**: Built-in metrics and logging for all commands
 5. **Secure by Default**: TLS support, no directory traversal, safe defaults
+6. **Development-First**: Optimize for developer workflows, not production scale
 
 ---
 
@@ -103,7 +117,6 @@ radix serve [directory] [flags]
 | `--brotli` | | bool | `false` | Enable brotli compression |
 | `--compression-level` | | int | `6` | Compression level (1-9) |
 | `--compression-min-size` | | int | `1024` | Minimum size to compress (bytes) |
-| `--precompressed` | | bool | `true` | Serve `.gz`/`.br` files if available |
 
 #### CORS
 
@@ -183,7 +196,7 @@ serve:
   etag: true
   last_modified: true
 
-  # Compression
+  # Compression (on-the-fly, no pre-compressed files needed)
   compression:
     enabled: true
     gzip: true
@@ -195,7 +208,6 @@ serve:
       - application/json
       - application/javascript
       - image/svg+xml
-    precompressed: true
 
   # CORS
   cors:
@@ -277,10 +289,10 @@ When `--spa` is enabled:
 
 #### Compression Strategy
 
-1. Check for pre-compressed files first (`.br`, `.gz`)
-2. If not found and compression enabled, compress on-the-fly
-3. Cache compressed responses in memory (configurable size limit)
-4. Honor `Accept-Encoding` header priority
+1. If compression enabled, compress on-the-fly
+2. Honor `Accept-Encoding` header priority (prefer brotli > gzip)
+3. Skip compression for already-compressed formats (images, videos, archives)
+4. Only compress above minimum size threshold
 
 #### ETag Generation
 
@@ -292,43 +304,45 @@ func generateETag(info os.FileInfo) string {
 }
 ```
 
-### Suggested Additions (Based on Modern Server Research)
+### Suggested Additions (Developer-Focused)
 
-Based on analysis of Caddy, nginx, static-web-server, http-server, and serve:
+Based on common local development needs:
 
 | Feature | Priority | Rationale |
 |---------|----------|-----------|
-| **Health endpoint** | High | `/health` or `/_health` for container orchestration |
-| **Graceful shutdown** | High | Clean connection draining on SIGTERM |
-| **Virtual hosts** | Medium | Multiple sites on one port |
-| **Markdown rendering** | Low | Render `.md` files as HTML |
-| **Template rendering** | Low | Inject variables into HTML |
-| **Access logging formats** | Medium | CLF, Combined, JSON log formats |
-| **Request ID** | Medium | X-Request-ID header injection |
-| **Rate limiting** | Low | Basic rate limiting per IP |
+| **Graceful shutdown** | High | Clean exit on Ctrl+C, no orphaned connections |
+| **Live reload integration** | High | WebSocket endpoint for browser refresh tools |
+| **Request logging** | High | See what's being requested during development |
+| **Port conflict handling** | Medium | Auto-increment port if busy, or clear error message |
+| **QR code for mobile** | Low | Display QR code for LAN URL (mobile testing) |
+| **Request ID** | Low | X-Request-ID header for debugging |
+
+**Explicitly NOT included** (production concerns):
+- Pre-compressed file serving (files change constantly in dev)
+- Virtual hosts (use different ports instead)
+- Rate limiting (not needed for local development)
+- Advanced caching strategies (usually want fresh files in dev)
 
 ### Examples
 
 ```bash
-# Basic static server
+# Basic static server (current directory)
 radix serve
 
 # Serve build directory with SPA routing
 radix serve ./dist --spa --port 3000
 
-# Production-like setup
-radix serve ./public \
-  --gzip --brotli \
-  --cors \
-  --cache 31536000 \
-  --security-headers \
-  --hsts
+# Frontend dev with API on different port (CORS enabled)
+radix serve ./src --cors --cache -1
 
-# Development with live reload integration
-radix serve ./src \
-  --cache -1 \
-  --cors \
-  --headers "Cache-Control: no-store"
+# React/Vue/Angular development build
+radix serve ./build --spa --port 3000 --browse
+
+# Serve with compression (useful for testing bundle sizes)
+radix serve ./dist --gzip --port 8080
+
+# Share on local network (mobile testing)
+radix serve ./public --host 0.0.0.0 --port 3000
 
 # Serve with custom error pages
 radix serve ./public \
