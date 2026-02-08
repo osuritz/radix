@@ -1,7 +1,37 @@
 # Radix Multi-Command Application - Implementation Plan
 
 ## Overview
+
 Build a multi-command CLI tool in Go providing local development HTTP capabilities: static file serving, reverse proxy, request echo, and API mocking.
+
+### Target Audience
+
+Radix is designed exclusively for **local development use**:
+
+- **Software engineers and developers** needing quick HTTP tooling during development
+- **Coding agents and AI assistants** requiring reliable, scriptable HTTP utilities
+- **Frontend developers** who need to mock APIs or serve SPA builds
+- **QA engineers** testing frontend/backend integration locally
+
+### Explicit Non-Goals
+
+Radix is **NOT intended for production traffic**. This means:
+
+- No focus on high-concurrency performance optimization
+- No clustering, load balancing across machines, or distributed features
+- No advanced security hardening (WAF, DDoS protection, etc.)
+- No pre-compressed file serving (files change constantly in development)
+- No complex caching strategies (developers usually want fresh files)
+
+For production use cases, users should use nginx, Caddy, or cloud load balancers.
+
+### Design Philosophy
+
+1. **Zero-config startup** - `radix serve` just works
+2. **Developer experience first** - Clear errors, sensible defaults
+3. **Single binary** - No runtime dependencies, easy to install
+4. **Fast startup** - Sub-100ms to serving requests
+5. **Observable** - Built-in metrics and logging for debugging
 
 ## 1. Project Structure (Go Best Practices)
 
