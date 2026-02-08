@@ -1,0 +1,1742 @@
+# Radix Command Design Document
+
+This document provides comprehensive design specifications for all planned Radix commands. Each section details the command's purpose, CLI interface, configuration options, implementation considerations, and examples.
+
+**Document Version**: 1.0.0
+**Last Updated**: 2026-02-08
+**Status**: Draft
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Serve Command](#serve-command)
+3. [Proxy Command](#proxy-command)
+4. [Echo Command](#echo-command)
+5. [Mock Command](#mock-command)
+6. [GenCert Command](#gencert-command)
+7. [Shared Infrastructure](#shared-infrastructure)
+8. [Configuration Reference](#configuration-reference)
+
+---
+
+## Overview
+
+Radix provides five primary server commands, each designed for specific local development scenarios:
+
+| Command | Purpose | Primary Use Case |
+|---------|---------|------------------|
+| `serve` | Static file server | Frontend development, SPA hosting |
+| `proxy` | Reverse proxy | API development, backend integration |
+| `echo` | Request echo/debug | HTTP debugging, webhook testing |
+| `mock` | API mocking | Frontend development without backend |
+| `gencert` | Certificate generation | TLS/HTTPS local development |
+
+### Design Principles
+
+1. **Zero Configuration Start**: Every command works with sensible defaults
+2. **Progressive Disclosure**: Simple CLI flags for common cases, config files for complex setups
+3. **Composable**: Commands can be combined via config file for complex scenarios
+4. **Observable**: Built-in metrics and logging for all commands
+5. **Secure by Default**: TLS support, no directory traversal, safe defaults
+
+---
+
+## Serve Command
+
+### Purpose
+
+Serve static files from a local directory. Replaces tools like Python's `SimpleHTTPServer`, Node's `http-server`, and `serve`.
+
+### CLI Interface
+
+```bash
+radix serve [directory] [flags]
+```
+
+### Flags
+
+#### Basic Options
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--dir` | `-d` | string | `.` | Directory to serve |
+| `--port` | `-p` | int | `8080` | Port to listen on |
+| `--host` | `-H` | string | `localhost` | Host/IP to bind to |
+| `--browse` | `-b` | bool | `false` | Open browser automatically |
+
+#### Index & Routing
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--index` | `-i` | string | `index.html` | Default index file |
+| `--spa` | | bool | `false` | SPA mode: serve index.html for all 404s |
+| `--spa-index` | | string | `index.html` | Index file for SPA fallback |
+| `--trailing-slash` | | string | `auto` | Trailing slash handling: `add`, `remove`, `auto` |
+| `--clean-urls` | | bool | `false` | Serve `/about` from `/about.html` |
+
+#### Directory Listing
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--dir-listing` | `-l` | bool | `true` | Enable directory listing |
+| `--dir-listing-format` | | string | `html` | Format: `html`, `json`, `text` |
+| `--hidden` | | bool | `false` | Show hidden files (dotfiles) |
+| `--ignore` | | []string | `[]` | Glob patterns to ignore |
+
+#### Caching & Headers
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--cache` | | string | `3600` | Cache-Control max-age (seconds), `-1` to disable |
+| `--cache-immutable` | | []string | `[]` | Patterns for immutable cache (e.g., `*.hash.*`) |
+| `--etag` | | bool | `true` | Generate ETag headers |
+| `--last-modified` | | bool | `true` | Send Last-Modified headers |
+| `--headers` | | []string | `[]` | Custom headers (`Header: Value`) |
+
+#### Compression
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--gzip` | `-z` | bool | `false` | Enable gzip compression |
+| `--brotli` | | bool | `false` | Enable brotli compression |
+| `--compression-level` | | int | `6` | Compression level (1-9) |
+| `--compression-min-size` | | int | `1024` | Minimum size to compress (bytes) |
+| `--precompressed` | | bool | `true` | Serve `.gz`/`.br` files if available |
+
+#### CORS
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--cors` | | bool | `false` | Enable CORS with permissive defaults |
+| `--cors-origin` | | string | `*` | Access-Control-Allow-Origin |
+| `--cors-methods` | | string | `GET,HEAD,OPTIONS` | Allowed methods |
+| `--cors-headers` | | string | `*` | Allowed headers |
+| `--cors-credentials` | | bool | `false` | Allow credentials |
+| `--cors-max-age` | | int | `86400` | Preflight cache duration (seconds) |
+
+#### Security Headers
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--security-headers` | | bool | `false` | Enable recommended security headers |
+| `--hsts` | | bool | `false` | Enable HSTS (requires TLS) |
+| `--hsts-max-age` | | int | `31536000` | HSTS max-age (seconds) |
+| `--x-frame-options` | | string | `DENY` | X-Frame-Options value |
+| `--x-content-type-options` | | bool | `true` | Add X-Content-Type-Options: nosniff |
+
+#### Error Pages
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--404-page` | | string | `` | Custom 404 page path |
+| `--500-page` | | string | `` | Custom 500 page path |
+
+#### Advanced
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--base-path` | | string | `/` | Base path prefix for all URLs |
+| `--rewrites` | | []string | `[]` | URL rewrite rules (`from:to`) |
+| `--redirects` | | []string | `[]` | Redirect rules (`from:to:status`) |
+| `--range` | | bool | `true` | Support range requests (byte serving) |
+| `--symlinks` | | bool | `true` | Follow symbolic links |
+| `--max-age-override` | | []string | `[]` | Per-pattern max-age (`*.js:31536000`) |
+
+### Configuration (YAML)
+
+```yaml
+serve:
+  # Basic
+  dir: ./public
+  port: 8080
+  host: localhost
+
+  # Index & Routing
+  index: index.html
+  spa: true
+  spa_index: index.html
+  trailing_slash: auto  # add, remove, auto
+  clean_urls: false
+
+  # Directory Listing
+  dir_listing: true
+  dir_listing_format: html  # html, json, text
+  hidden: false
+  ignore:
+    - "*.tmp"
+    - ".git"
+    - "node_modules"
+
+  # Caching
+  cache:
+    default: 3600
+    immutable_patterns:
+      - "*.hash.*"
+      - "assets/*"
+    overrides:
+      "*.html": 0
+      "*.js": 31536000
+      "*.css": 31536000
+      "images/*": 604800
+  etag: true
+  last_modified: true
+
+  # Compression
+  compression:
+    enabled: true
+    gzip: true
+    brotli: true
+    level: 6
+    min_size: 1024
+    types:
+      - text/*
+      - application/json
+      - application/javascript
+      - image/svg+xml
+    precompressed: true
+
+  # CORS
+  cors:
+    enabled: true
+    origin: "*"
+    methods: "GET, HEAD, OPTIONS"
+    headers: "*"
+    credentials: false
+    max_age: 86400
+
+  # Security Headers
+  security:
+    enabled: false
+    hsts:
+      enabled: false
+      max_age: 31536000
+      include_subdomains: true
+      preload: false
+    x_frame_options: DENY
+    x_content_type_options: true
+    referrer_policy: strict-origin-when-cross-origin
+    csp: ""  # Custom Content-Security-Policy
+
+  # Custom Headers
+  headers:
+    X-Powered-By: Radix
+    X-Custom-Header: value
+
+  # Error Pages
+  error_pages:
+    404: ./errors/404.html
+    500: ./errors/500.html
+
+  # URL Handling
+  rewrites:
+    - from: /old-path/*
+      to: /new-path/$1
+    - from: /api/*
+      to: /v2/api/$1
+
+  redirects:
+    - from: /legacy
+      to: /modern
+      status: 301
+    - from: /temp
+      to: /permanent
+      status: 302
+
+  # Advanced
+  base_path: /
+  range: true
+  symlinks: true
+```
+
+### Implementation Notes
+
+#### MIME Type Detection
+
+Use Go's `mime` package with extended types:
+
+```go
+var extraMimeTypes = map[string]string{
+    ".wasm":  "application/wasm",
+    ".mjs":   "application/javascript",
+    ".woff2": "font/woff2",
+    ".avif":  "image/avif",
+    ".webp":  "image/webp",
+    ".webm":  "video/webm",
+}
+```
+
+#### SPA Mode Behavior
+
+When `--spa` is enabled:
+1. Try to serve the exact file path
+2. If file not found and path has no extension, serve `spa_index`
+3. If file not found and path has extension, return 404
+4. API paths (configurable, default `/api/*`) always return 404
+
+#### Compression Strategy
+
+1. Check for pre-compressed files first (`.br`, `.gz`)
+2. If not found and compression enabled, compress on-the-fly
+3. Cache compressed responses in memory (configurable size limit)
+4. Honor `Accept-Encoding` header priority
+
+#### ETag Generation
+
+Generate weak ETags based on file modification time and size:
+
+```go
+func generateETag(info os.FileInfo) string {
+    return fmt.Sprintf(`W/"%x-%x"`, info.ModTime().Unix(), info.Size())
+}
+```
+
+### Suggested Additions (Based on Modern Server Research)
+
+Based on analysis of Caddy, nginx, static-web-server, http-server, and serve:
+
+| Feature | Priority | Rationale |
+|---------|----------|-----------|
+| **Health endpoint** | High | `/health` or `/_health` for container orchestration |
+| **Graceful shutdown** | High | Clean connection draining on SIGTERM |
+| **Virtual hosts** | Medium | Multiple sites on one port |
+| **Markdown rendering** | Low | Render `.md` files as HTML |
+| **Template rendering** | Low | Inject variables into HTML |
+| **Access logging formats** | Medium | CLF, Combined, JSON log formats |
+| **Request ID** | Medium | X-Request-ID header injection |
+| **Rate limiting** | Low | Basic rate limiting per IP |
+
+### Examples
+
+```bash
+# Basic static server
+radix serve
+
+# Serve build directory with SPA routing
+radix serve ./dist --spa --port 3000
+
+# Production-like setup
+radix serve ./public \
+  --gzip --brotli \
+  --cors \
+  --cache 31536000 \
+  --security-headers \
+  --hsts
+
+# Development with live reload integration
+radix serve ./src \
+  --cache -1 \
+  --cors \
+  --headers "Cache-Control: no-store"
+
+# Serve with custom error pages
+radix serve ./public \
+  --404-page ./errors/404.html \
+  --spa
+```
+
+---
+
+## Proxy Command
+
+### Purpose
+
+Reverse proxy requests to backend services. Essential for local development when frontend and backend run on different ports, or for debugging API traffic.
+
+### CLI Interface
+
+```bash
+radix proxy [target] [flags]
+```
+
+### Flags
+
+#### Basic Options
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--target` | `-t` | string | *required* | Target URL to proxy to |
+| `--port` | `-p` | int | `8080` | Port to listen on |
+| `--host` | `-H` | string | `localhost` | Host/IP to bind to |
+
+#### Path Handling
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--strip-prefix` | | string | `` | Remove prefix before forwarding |
+| `--add-prefix` | | string | `` | Add prefix before forwarding |
+| `--rewrite` | | []string | `[]` | Path rewrite rules (`from=to`) |
+
+#### Headers
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--header` | | []string | `[]` | Add/override request headers |
+| `--remove-header` | | []string | `[]` | Remove request headers |
+| `--response-header` | | []string | `[]` | Add/override response headers |
+| `--host-header` | | string | `auto` | Host header: `auto`, `preserve`, or custom |
+| `--forward-host` | | bool | `false` | Forward original Host header |
+
+#### Timeouts
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--timeout` | | duration | `30s` | Total request timeout |
+| `--dial-timeout` | | duration | `10s` | Connection dial timeout |
+| `--read-timeout` | | duration | `30s` | Response read timeout |
+| `--write-timeout` | | duration | `30s` | Request write timeout |
+| `--idle-timeout` | | duration | `90s` | Keep-alive idle timeout |
+
+#### Streaming & SSE Support
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--streaming` | | bool | `true` | Enable streaming response support |
+| `--no-buffering` | | bool | `false` | Disable response buffering globally |
+| `--flush-interval` | | duration | `100ms` | Flush interval for streaming |
+| `--sse-paths` | | []string | `[]` | Paths to treat as SSE (auto-detected) |
+| `--sse-timeout` | | duration | `0` | SSE connection timeout (0=infinite) |
+
+#### WebSocket Support
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--websocket` | `-w` | bool | `true` | Enable WebSocket proxying |
+| `--ws-read-buffer` | | int | `4096` | WebSocket read buffer size |
+| `--ws-write-buffer` | | int | `4096` | WebSocket write buffer size |
+| `--ws-ping-interval` | | duration | `30s` | WebSocket ping interval |
+
+#### Backend TLS
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--tls-skip-verify` | `-k` | bool | `false` | Skip TLS certificate verification |
+| `--backend-ca` | | string | `` | CA certificate for backend verification |
+| `--backend-cert` | | string | `` | Client certificate for backend mTLS |
+| `--backend-key` | | string | `` | Client key for backend mTLS |
+
+#### Load Balancing (Future)
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--targets` | | []string | `[]` | Multiple backend targets |
+| `--lb-strategy` | | string | `round-robin` | Strategy: `round-robin`, `random`, `least-conn` |
+| `--health-check` | | string | `` | Health check endpoint |
+| `--health-interval` | | duration | `10s` | Health check interval |
+
+#### CORS (Proxy-Level)
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--cors` | | bool | `false` | Add CORS headers to responses |
+| `--cors-origin` | | string | `*` | Access-Control-Allow-Origin |
+
+#### Logging & Debugging
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--log-requests` | | bool | `true` | Log proxied requests |
+| `--log-body` | | bool | `false` | Log request/response bodies |
+| `--log-body-max` | | int | `4096` | Max body bytes to log |
+
+### Configuration (YAML)
+
+```yaml
+proxy:
+  # Basic
+  target: http://localhost:3000
+  port: 8080
+  host: localhost
+
+  # Multiple targets (load balancing)
+  targets:
+    - url: http://localhost:3001
+      weight: 2
+    - url: http://localhost:3002
+      weight: 1
+  lb_strategy: round-robin  # round-robin, random, least-conn, ip-hash
+
+  # Path handling
+  strip_prefix: /api
+  add_prefix: /v2
+  rewrites:
+    - from: /old/*
+      to: /new/$1
+    - from: /users/:id
+      to: /api/users/$id
+
+  # Headers
+  headers:
+    request:
+      add:
+        X-Forwarded-Proto: https
+        X-Real-IP: $remote_addr
+      remove:
+        - Authorization  # Strip auth before forwarding
+    response:
+      add:
+        X-Proxy: Radix
+      remove:
+        - Server
+  host_header: auto  # auto, preserve, or custom value
+
+  # Timeouts
+  timeouts:
+    total: 30s
+    dial: 10s
+    read: 30s
+    write: 30s
+    idle: 90s
+
+  # Streaming & SSE
+  streaming:
+    enabled: true
+    buffer_response: false
+    flush_interval: 100ms
+    sse:
+      paths:
+        - /events
+        - /stream
+        - /api/chat/*
+      timeout: 0  # 0 = no timeout
+      retry_interval: 3000  # SSE retry field (ms)
+
+  # WebSocket
+  websocket:
+    enabled: true
+    read_buffer: 4096
+    write_buffer: 4096
+    ping_interval: 30s
+    pong_timeout: 60s
+    origins:
+      - localhost
+      - "*.example.com"
+
+  # Backend TLS
+  backend_tls:
+    skip_verify: false
+    ca: ./certs/backend-ca.pem
+    cert: ./certs/client.pem
+    key: ./certs/client-key.pem
+    server_name: api.internal
+
+  # Health checks
+  health:
+    enabled: true
+    path: /health
+    interval: 10s
+    timeout: 5s
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+
+  # CORS
+  cors:
+    enabled: true
+    origin: "*"
+    methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    headers: "Content-Type, Authorization"
+    credentials: true
+    max_age: 86400
+
+  # Request/Response modifications
+  request_modifiers:
+    - type: header
+      action: set
+      name: X-Request-ID
+      value: $uuid
+
+  response_modifiers:
+    - type: header
+      action: set
+      name: X-Response-Time
+      value: $response_time
+
+  # Retry policy
+  retry:
+    enabled: true
+    attempts: 3
+    per_try_timeout: 10s
+    retry_on:
+      - 502
+      - 503
+      - 504
+      - connect-failure
+      - reset
+
+  # Circuit breaker
+  circuit_breaker:
+    enabled: false
+    threshold: 5  # failures before opening
+    timeout: 30s  # time before half-open
+
+  # Logging
+  logging:
+    requests: true
+    responses: true
+    body: false
+    body_max_size: 4096
+```
+
+### Implementation Notes
+
+#### Streaming Response Support
+
+Critical for SSE (Server-Sent Events) and AI chat applications:
+
+```go
+type streamingTransport struct {
+    base http.RoundTripper
+}
+
+func (t *streamingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+    resp, err := t.base.RoundTrip(req)
+    if err != nil {
+        return nil, err
+    }
+
+    // Detect streaming responses
+    contentType := resp.Header.Get("Content-Type")
+    if isStreamingContentType(contentType) {
+        // Ensure no buffering
+        resp.Header.Set("X-Accel-Buffering", "no")
+        resp.Header.Set("Cache-Control", "no-cache")
+    }
+
+    return resp, nil
+}
+
+func isStreamingContentType(ct string) bool {
+    streamingTypes := []string{
+        "text/event-stream",           // SSE
+        "application/x-ndjson",         // Newline-delimited JSON
+        "application/stream+json",      // JSON streaming
+        "text/plain; charset=utf-8",    // Often used for streaming
+    }
+    for _, st := range streamingTypes {
+        if strings.HasPrefix(ct, st) {
+            return true
+        }
+    }
+    return false
+}
+```
+
+#### SSE-Specific Handling
+
+```go
+type sseProxy struct {
+    target    *url.URL
+    flusher   http.Flusher
+    timeout   time.Duration
+}
+
+func (p *sseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    // Set SSE headers
+    w.Header().Set("Content-Type", "text/event-stream")
+    w.Header().Set("Cache-Control", "no-cache")
+    w.Header().Set("Connection", "keep-alive")
+    w.Header().Set("X-Accel-Buffering", "no")  // Disable nginx buffering
+
+    // Ensure we can flush
+    flusher, ok := w.(http.Flusher)
+    if !ok {
+        http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+        return
+    }
+
+    // Create upstream request
+    proxyReq := p.createUpstreamRequest(r)
+
+    // Use HTTP/1.1 for upstream (HTTP/2 can cause issues with SSE)
+    client := &http.Client{
+        Transport: &http.Transport{
+            ForceAttemptHTTP2:     false,
+            MaxIdleConns:          100,
+            IdleConnTimeout:       90 * time.Second,
+            ResponseHeaderTimeout: 0,  // No timeout for SSE
+        },
+    }
+
+    resp, err := client.Do(proxyReq)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadGateway)
+        return
+    }
+    defer resp.Body.Close()
+
+    // Copy headers
+    for k, vv := range resp.Header {
+        for _, v := range vv {
+            w.Header().Add(k, v)
+        }
+    }
+    w.WriteHeader(resp.StatusCode)
+
+    // Stream the response
+    buf := make([]byte, 1024)
+    for {
+        n, err := resp.Body.Read(buf)
+        if n > 0 {
+            w.Write(buf[:n])
+            flusher.Flush()
+        }
+        if err != nil {
+            break
+        }
+    }
+}
+```
+
+#### WebSocket Proxy
+
+```go
+func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+    // Upgrade connection
+    upgrader := websocket.Upgrader{
+        ReadBufferSize:  p.config.WSReadBuffer,
+        WriteBufferSize: p.config.WSWriteBuffer,
+        CheckOrigin:     p.checkWSOrigin,
+    }
+
+    clientConn, err := upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        return
+    }
+    defer clientConn.Close()
+
+    // Connect to backend
+    backendURL := p.wsTargetURL(r)
+    backendConn, _, err := websocket.DefaultDialer.Dial(backendURL, nil)
+    if err != nil {
+        return
+    }
+    defer backendConn.Close()
+
+    // Bidirectional copy
+    errChan := make(chan error, 2)
+    go p.copyWS(clientConn, backendConn, errChan)
+    go p.copyWS(backendConn, clientConn, errChan)
+
+    <-errChan
+}
+```
+
+#### X-Forwarded Headers
+
+Automatically add standard proxy headers:
+
+```go
+func addForwardedHeaders(req *http.Request, original *http.Request) {
+    if clientIP, _, err := net.SplitHostPort(original.RemoteAddr); err == nil {
+        if prior := original.Header.Get("X-Forwarded-For"); prior != "" {
+            clientIP = prior + ", " + clientIP
+        }
+        req.Header.Set("X-Forwarded-For", clientIP)
+    }
+
+    if original.TLS != nil {
+        req.Header.Set("X-Forwarded-Proto", "https")
+    } else {
+        req.Header.Set("X-Forwarded-Proto", "http")
+    }
+
+    req.Header.Set("X-Forwarded-Host", original.Host)
+    req.Header.Set("X-Real-IP", strings.Split(original.RemoteAddr, ":")[0])
+}
+```
+
+### Examples
+
+```bash
+# Basic proxy
+radix proxy http://localhost:3000
+
+# API proxy with path stripping
+radix proxy http://api.internal:8080 \
+  --strip-prefix /api \
+  --port 8080
+
+# SSE/Streaming proxy for AI chat
+radix proxy http://localhost:11434 \
+  --streaming \
+  --no-buffering \
+  --sse-paths "/api/chat,/api/generate" \
+  --sse-timeout 0
+
+# WebSocket proxy
+radix proxy ws://localhost:8080 \
+  --websocket \
+  --ws-ping-interval 30s
+
+# Proxy with CORS (for frontend dev)
+radix proxy http://localhost:3000 \
+  --cors \
+  --cors-origin "http://localhost:5173"
+
+# Proxy with custom headers
+radix proxy http://api.example.com \
+  --header "Authorization: Bearer token123" \
+  --header "X-Custom: value"
+
+# Development proxy with TLS skip
+radix proxy https://self-signed.local:8443 \
+  --tls-skip-verify
+
+# Load balanced proxy
+radix proxy \
+  --targets http://localhost:3001,http://localhost:3002 \
+  --lb-strategy round-robin \
+  --health-check /health
+```
+
+---
+
+## Echo Command
+
+### Purpose
+
+Echo server that returns detailed information about incoming HTTP requests. Essential for debugging webhooks, testing HTTP clients, and understanding request structure.
+
+### CLI Interface
+
+```bash
+radix echo [flags]
+```
+
+### Flags
+
+#### Basic Options
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--port` | `-p` | int | `8080` | Port to listen on |
+| `--host` | `-H` | string | `localhost` | Host/IP to bind to |
+
+#### Response Control
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--status` | `-s` | int | `200` | Default response status code |
+| `--delay` | | duration | `0` | Response delay |
+| `--delay-jitter` | | duration | `0` | Random jitter added to delay |
+| `--body` | | string | `` | Custom response body (overrides echo) |
+| `--header` | | []string | `[]` | Custom response headers |
+| `--content-type` | | string | `application/json` | Response Content-Type |
+
+#### Echo Behavior
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--echo-body` | | bool | `true` | Include request body in response |
+| `--echo-headers` | | bool | `true` | Include request headers in response |
+| `--echo-query` | | bool | `true` | Include query parameters in response |
+| `--body-limit` | | int | `1048576` | Max request body size (1MB) |
+| `--pretty` | | bool | `true` | Pretty-print JSON response |
+
+#### Path-Based Responses
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--status-from-path` | | bool | `false` | Use path as status (e.g., `/404` → 404) |
+| `--delay-from-path` | | bool | `false` | Use path as delay (e.g., `/delay/500ms`) |
+
+#### Logging
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--log-body` | | bool | `false` | Log request bodies |
+| `--log-body-max` | | int | `4096` | Max body bytes to log |
+
+### Configuration (YAML)
+
+```yaml
+echo:
+  port: 8080
+  host: localhost
+
+  # Default response
+  response:
+    status: 200
+    delay: 0
+    delay_jitter: 0
+    body: ""  # Empty = echo mode
+    content_type: application/json
+    headers:
+      X-Echo-Server: Radix
+
+  # Echo behavior
+  echo:
+    body: true
+    headers: true
+    query: true
+    cookies: true
+    tls: true  # Include TLS info when available
+
+  # Limits
+  limits:
+    body_size: 1048576  # 1MB
+    header_size: 65536  # 64KB
+
+  # Path-based behavior
+  path_handlers:
+    status_from_path: false  # /404 returns 404
+    delay_from_path: false   # /delay/500ms delays 500ms
+
+  # Special endpoints
+  endpoints:
+    health: /_health
+    ready: /_ready
+
+  # Logging
+  logging:
+    body: false
+    body_max_size: 4096
+```
+
+### Response Format
+
+```json
+{
+  "request": {
+    "method": "POST",
+    "url": "/api/users?limit=10",
+    "path": "/api/users",
+    "query": {
+      "limit": ["10"]
+    },
+    "headers": {
+      "Content-Type": ["application/json"],
+      "Authorization": ["Bearer xxx..."],
+      "User-Agent": ["curl/7.88.1"],
+      "Accept": ["*/*"]
+    },
+    "body": {
+      "name": "John Doe",
+      "email": "john@example.com"
+    },
+    "body_raw": "{\"name\":\"John Doe\",\"email\":\"john@example.com\"}",
+    "body_size": 52,
+    "cookies": {
+      "session_id": "abc123"
+    }
+  },
+  "client": {
+    "ip": "127.0.0.1",
+    "port": 54321,
+    "remote_addr": "127.0.0.1:54321"
+  },
+  "server": {
+    "hostname": "localhost",
+    "port": 8080,
+    "protocol": "HTTP/1.1"
+  },
+  "tls": {
+    "enabled": false,
+    "version": "",
+    "cipher_suite": "",
+    "server_name": "",
+    "client_cert": null
+  },
+  "timing": {
+    "timestamp": "2026-02-08T12:00:00.000Z",
+    "unix": 1770681600,
+    "unix_nano": 1770681600000000000
+  },
+  "echo": {
+    "version": "1.0.0",
+    "delay_applied": "0s",
+    "request_id": "req_abc123xyz"
+  }
+}
+```
+
+### Implementation Notes
+
+#### Body Parsing
+
+Attempt to parse body as JSON for structured echo:
+
+```go
+func parseBody(body []byte, contentType string) (interface{}, string) {
+    if len(body) == 0 {
+        return nil, ""
+    }
+
+    raw := string(body)
+
+    // Try JSON first
+    if strings.Contains(contentType, "json") {
+        var parsed interface{}
+        if err := json.Unmarshal(body, &parsed); err == nil {
+            return parsed, raw
+        }
+    }
+
+    // Try form data
+    if strings.Contains(contentType, "form-urlencoded") {
+        if values, err := url.ParseQuery(raw); err == nil {
+            return values, raw
+        }
+    }
+
+    // Return as string
+    return nil, raw
+}
+```
+
+#### Path-Based Status Codes
+
+```go
+func statusFromPath(path string) (int, bool) {
+    // Match /status/XXX or /XXX
+    re := regexp.MustCompile(`^/(?:status/)?(\d{3})$`)
+    if matches := re.FindStringSubmatch(path); matches != nil {
+        status, _ := strconv.Atoi(matches[1])
+        if status >= 100 && status < 600 {
+            return status, true
+        }
+    }
+    return 0, false
+}
+```
+
+### Examples
+
+```bash
+# Basic echo server
+radix echo
+
+# Echo with delay (simulate slow API)
+radix echo --delay 2s
+
+# Echo with random jitter
+radix echo --delay 500ms --delay-jitter 200ms
+
+# Custom status code
+radix echo --status 201
+
+# Path-based status codes
+radix echo --status-from-path
+# Then: curl localhost:8080/404 → returns 404
+# Then: curl localhost:8080/500 → returns 500
+
+# Custom response body
+radix echo --body '{"message": "OK"}' --status 200
+
+# Webhook debugging
+radix echo --log-body --port 9000
+# Then configure webhook to POST to localhost:9000
+```
+
+---
+
+## Mock Command
+
+### Purpose
+
+API mocking server that serves predefined responses based on route matching. Enables frontend development without a running backend.
+
+### CLI Interface
+
+```bash
+radix mock [config-file] [flags]
+```
+
+### Flags
+
+#### Basic Options
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--routes` | `-r` | string | `./routes.yml` | Routes configuration file |
+| `--port` | `-p` | int | `8080` | Port to listen on |
+| `--host` | `-H` | string | `localhost` | Host/IP to bind to |
+| `--watch` | `-w` | bool | `false` | Watch config file for changes |
+
+#### Behavior
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--latency` | | duration | `0` | Global artificial latency |
+| `--latency-jitter` | | duration | `0` | Random latency jitter |
+| `--fail-rate` | | float | `0` | Random failure rate (0-100%) |
+| `--fail-status` | | int | `500` | Status code for random failures |
+| `--cors` | | bool | `true` | Enable CORS by default |
+
+#### Fallback
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--fallback` | | string | `404` | Unmatched route behavior: `404`, `echo`, `proxy` |
+| `--fallback-target` | | string | `` | Proxy target for fallback |
+
+### Configuration (YAML)
+
+```yaml
+# mock-routes.yml
+
+# Global settings
+settings:
+  port: 8080
+  host: localhost
+  latency: 0
+  latency_jitter: 0
+  fail_rate: 0
+  fail_status: 500
+  cors:
+    enabled: true
+    origin: "*"
+
+  # Fallback for unmatched routes
+  fallback:
+    type: "404"  # 404, echo, proxy
+    proxy_target: ""
+
+# Route definitions
+routes:
+  # Simple GET endpoint
+  - path: /api/health
+    method: GET
+    response:
+      status: 200
+      body: '{"status": "healthy"}'
+      headers:
+        Content-Type: application/json
+
+  # Path parameters
+  - path: /api/users/:id
+    method: GET
+    response:
+      status: 200
+      body: |
+        {
+          "id": "{{params.id}}",
+          "name": "User {{params.id}}",
+          "email": "user{{params.id}}@example.com"
+        }
+
+  # Response from file
+  - path: /api/products
+    method: GET
+    response:
+      file: ./mocks/products.json
+      headers:
+        Content-Type: application/json
+
+  # POST with request body access
+  - path: /api/users
+    method: POST
+    response:
+      status: 201
+      body: |
+        {
+          "id": "{{uuid}}",
+          "name": "{{body.name}}",
+          "email": "{{body.email}}",
+          "created_at": "{{now}}"
+        }
+
+  # Conditional responses
+  - path: /api/auth/login
+    method: POST
+    conditions:
+      - match:
+          body.username: admin
+          body.password: secret
+        response:
+          status: 200
+          body: '{"token": "{{uuid}}", "user": "admin"}'
+      - match:
+          body.username: "*"
+        response:
+          status: 401
+          body: '{"error": "Invalid credentials"}'
+
+  # Query parameter matching
+  - path: /api/search
+    method: GET
+    conditions:
+      - match:
+          query.q: ""
+        response:
+          status: 400
+          body: '{"error": "Query parameter q is required"}'
+      - match:
+          query.q: "*"
+        response:
+          status: 200
+          body: '{"results": [], "query": "{{query.q}}"}'
+
+  # Header matching
+  - path: /api/protected
+    method: GET
+    conditions:
+      - match:
+          headers.Authorization: "Bearer valid-token"
+        response:
+          status: 200
+          body: '{"data": "secret"}'
+      - match:
+          headers.Authorization: ""
+        response:
+          status: 401
+          body: '{"error": "Missing authorization"}'
+      - default: true
+        response:
+          status: 403
+          body: '{"error": "Invalid token"}'
+
+  # Delayed response
+  - path: /api/slow
+    method: GET
+    delay: 2s
+    response:
+      status: 200
+      body: '{"message": "Finally!"}'
+
+  # Random delay range
+  - path: /api/variable
+    method: GET
+    delay: 100ms
+    delay_jitter: 500ms
+    response:
+      status: 200
+      body: '{"message": "Variable delay"}'
+
+  # Multiple methods
+  - path: /api/resource
+    methods: [GET, POST, PUT, DELETE]
+    response:
+      status: 200
+      body: '{"method": "{{method}}", "path": "{{path}}"}'
+
+  # Regex path matching
+  - path: "regex:/api/v[0-9]+/users"
+    method: GET
+    response:
+      status: 200
+      body: '{"users": []}'
+
+  # Proxy fallback for specific route
+  - path: /api/external/*
+    proxy: https://api.external.com
+
+  # Sequence responses (stateful)
+  - path: /api/counter
+    method: POST
+    sequence:
+      - body: '{"count": 1}'
+      - body: '{"count": 2}'
+      - body: '{"count": 3}'
+      - repeat: true  # Loop back to first
+        body: '{"count": 1, "reset": true}'
+
+  # Random response selection
+  - path: /api/random
+    method: GET
+    random:
+      - weight: 70
+        response:
+          status: 200
+          body: '{"result": "success"}'
+      - weight: 20
+        response:
+          status: 500
+          body: '{"error": "Random failure"}'
+      - weight: 10
+        response:
+          status: 503
+          body: '{"error": "Service unavailable"}'
+
+  # WebSocket mock
+  - path: /ws/chat
+    websocket: true
+    messages:
+      - delay: 0
+        data: '{"type": "connected", "id": "{{uuid}}"}'
+      - delay: 1s
+        data: '{"type": "message", "text": "Hello!"}'
+      - delay: 2s
+        data: '{"type": "message", "text": "How can I help?"}'
+    echo: true  # Echo client messages back
+
+  # SSE mock
+  - path: /events
+    sse: true
+    events:
+      - delay: 0
+        event: connected
+        data: '{"status": "ok"}'
+      - delay: 1s
+        event: update
+        data: '{"value": {{random 1 100}}}'
+        repeat: 10
+        repeat_delay: 1s
+```
+
+### Template Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `{{uuid}}` | Generate UUID v4 | `550e8400-e29b-41d4-a716-446655440000` |
+| `{{now}}` | Current ISO timestamp | `2026-02-08T12:00:00Z` |
+| `{{now "RFC3339"}}` | Formatted timestamp | `2026-02-08T12:00:00Z` |
+| `{{timestamp}}` | Unix timestamp | `1770681600` |
+| `{{random min max}}` | Random integer | `42` |
+| `{{randomFloat min max}}` | Random float | `3.14` |
+| `{{randomString len}}` | Random alphanumeric | `aB3xY9` |
+| `{{randomChoice "a" "b"}}` | Random selection | `a` or `b` |
+| `{{lorem words}}` | Lorem ipsum text | `Lorem ipsum dolor...` |
+| `{{params.name}}` | Path parameter | `123` |
+| `{{query.key}}` | Query parameter | `value` |
+| `{{body.field}}` | Request body field | `value` |
+| `{{headers.Name}}` | Request header | `value` |
+| `{{method}}` | HTTP method | `POST` |
+| `{{path}}` | Request path | `/api/users` |
+| `{{env "VAR"}}` | Environment variable | `value` |
+| `{{file "path"}}` | File contents | `...` |
+| `{{base64 "text"}}` | Base64 encode | `dGV4dA==` |
+| `{{hash "sha256" "text"}}` | Hash value | `9f86d08...` |
+| `{{seq}}` | Sequence counter | `1`, `2`, `3`... |
+| `{{faker.name}}` | Fake name | `John Doe` |
+| `{{faker.email}}` | Fake email | `john@example.com` |
+| `{{faker.phone}}` | Fake phone | `555-1234` |
+| `{{faker.address}}` | Fake address | `123 Main St` |
+
+### Implementation Notes
+
+#### Route Matching Priority
+
+1. Exact path match with exact method
+2. Exact path match with wildcard method
+3. Parameterized path match (`:id`)
+4. Regex path match (`regex:pattern`)
+5. Glob path match (`/api/*`)
+6. Fallback handler
+
+#### Hot Reload
+
+```go
+type ConfigWatcher struct {
+    path     string
+    routes   atomic.Value  // *RouteConfig
+    watcher  *fsnotify.Watcher
+}
+
+func (w *ConfigWatcher) Start() error {
+    watcher, err := fsnotify.NewWatcher()
+    if err != nil {
+        return err
+    }
+
+    go func() {
+        for {
+            select {
+            case event := <-watcher.Events:
+                if event.Op&fsnotify.Write == fsnotify.Write {
+                    if config, err := loadConfig(w.path); err == nil {
+                        w.routes.Store(config)
+                        log.Println("Routes reloaded")
+                    }
+                }
+            case err := <-watcher.Errors:
+                log.Println("Watcher error:", err)
+            }
+        }
+    }()
+
+    return watcher.Add(w.path)
+}
+```
+
+### Examples
+
+```bash
+# Start mock server with routes file
+radix mock --routes ./api-mocks.yml
+
+# Watch for config changes
+radix mock --routes ./api-mocks.yml --watch
+
+# Add global latency
+radix mock --routes ./api-mocks.yml --latency 200ms
+
+# Chaos testing (10% failure rate)
+radix mock --routes ./api-mocks.yml --fail-rate 10
+
+# Fallback to proxy for unmatched routes
+radix mock --routes ./api-mocks.yml \
+  --fallback proxy \
+  --fallback-target http://localhost:3000
+
+# CORS disabled (for testing)
+radix mock --routes ./api-mocks.yml --cors=false
+```
+
+---
+
+## GenCert Command
+
+### Purpose
+
+Generate self-signed TLS certificates for local HTTPS development. Eliminates the need for external tools like `mkcert` or `openssl`.
+
+### CLI Interface
+
+```bash
+radix gencert [flags]
+```
+
+### Flags
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--host` | | string | `localhost` | Comma-separated hostnames/IPs |
+| `--output` | `-o` | string | `./certs` | Output directory |
+| `--days` | | int | `365` | Certificate validity (days) |
+| `--org` | | string | `Radix Development` | Organization name |
+| `--key-size` | | int | `2048` | RSA key size (2048, 4096) |
+| `--key-type` | | string | `rsa` | Key type: `rsa`, `ecdsa` |
+| `--ecdsa-curve` | | string | `P-256` | ECDSA curve: `P-256`, `P-384`, `P-521` |
+| `--ca` | | bool | `true` | Generate CA certificate |
+| `--ca-cert` | | string | `` | Use existing CA certificate |
+| `--ca-key` | | string | `` | Use existing CA private key |
+| `--client` | | bool | `false` | Generate client certificate |
+| `--pkcs12` | | bool | `false` | Also generate PKCS#12 bundle |
+| `--pkcs12-password` | | string | `changeit` | PKCS#12 password |
+| `--overwrite` | | bool | `false` | Overwrite existing files |
+
+### Output Files
+
+```
+./certs/
+├── ca.pem           # CA certificate (for browser import)
+├── ca-key.pem       # CA private key (keep secure)
+├── cert.pem         # Server certificate
+├── key.pem          # Server private key
+├── cert.p12         # PKCS#12 bundle (optional)
+└── README.txt       # Usage instructions
+```
+
+### Configuration (YAML)
+
+```yaml
+gencert:
+  hosts:
+    - localhost
+    - "127.0.0.1"
+    - "::1"
+    - "*.local.dev"
+    - myapp.local
+
+  output: ./certs
+  days: 365
+
+  organization: "Radix Development"
+  organizational_unit: "Development"
+  country: "US"
+  province: ""
+  locality: ""
+
+  key:
+    type: rsa  # rsa, ecdsa
+    size: 2048  # RSA: 2048, 4096; ECDSA: ignored
+    curve: P-256  # ECDSA: P-256, P-384, P-521
+
+  ca:
+    generate: true
+    cert: ""  # Use existing CA
+    key: ""
+
+  pkcs12:
+    generate: false
+    password: changeit
+```
+
+### Implementation Notes
+
+#### Certificate Generation
+
+```go
+func generateCertificate(config *CertConfig) (*Certificate, error) {
+    // Generate private key
+    var privateKey crypto.PrivateKey
+    var publicKey crypto.PublicKey
+
+    switch config.KeyType {
+    case "rsa":
+        key, err := rsa.GenerateKey(rand.Reader, config.KeySize)
+        if err != nil {
+            return nil, err
+        }
+        privateKey = key
+        publicKey = &key.PublicKey
+    case "ecdsa":
+        curve := ellipticCurve(config.ECDSACurve)
+        key, err := ecdsa.GenerateKey(curve, rand.Reader)
+        if err != nil {
+            return nil, err
+        }
+        privateKey = key
+        publicKey = &key.PublicKey
+    }
+
+    // Create certificate template
+    template := x509.Certificate{
+        SerialNumber: big.NewInt(time.Now().UnixNano()),
+        Subject: pkix.Name{
+            Organization: []string{config.Organization},
+            CommonName:   config.Hosts[0],
+        },
+        NotBefore:             time.Now(),
+        NotAfter:              time.Now().AddDate(0, 0, config.Days),
+        KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+        ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+        BasicConstraintsValid: true,
+    }
+
+    // Add SANs
+    for _, host := range config.Hosts {
+        if ip := net.ParseIP(host); ip != nil {
+            template.IPAddresses = append(template.IPAddresses, ip)
+        } else {
+            template.DNSNames = append(template.DNSNames, host)
+        }
+    }
+
+    // Sign certificate
+    certDER, err := x509.CreateCertificate(
+        rand.Reader,
+        &template,
+        config.CACert,  // Parent cert (or self for CA)
+        publicKey,
+        config.CAKey,   // Parent key (or self for CA)
+    )
+    if err != nil {
+        return nil, err
+    }
+
+    return &Certificate{
+        Cert:       certDER,
+        PrivateKey: privateKey,
+    }, nil
+}
+```
+
+#### Trust Store Installation (Documentation)
+
+```bash
+# macOS - Add CA to System Keychain
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ./certs/ca.pem
+
+# Linux - Add to system certificates
+sudo cp ./certs/ca.pem /usr/local/share/ca-certificates/radix-ca.crt
+sudo update-ca-certificates
+
+# Windows - Add to certificate store
+certutil -addstore -f "ROOT" .\certs\ca.pem
+
+# Firefox (all platforms) - Import manually
+# Preferences → Privacy & Security → View Certificates → Import
+
+# Chrome (uses system store on macOS/Windows, NSS on Linux)
+# Linux: certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "Radix CA" -i ./certs/ca.pem
+```
+
+### Examples
+
+```bash
+# Generate certs for localhost
+radix gencert
+
+# Multiple hosts
+radix gencert --host "localhost,127.0.0.1,myapp.local,*.local.dev"
+
+# Custom output directory
+radix gencert --output ~/.radix/certs
+
+# Longer validity
+radix gencert --days 730
+
+# ECDSA key (faster, smaller)
+radix gencert --key-type ecdsa --ecdsa-curve P-256
+
+# Using existing CA
+radix gencert \
+  --ca=false \
+  --ca-cert ./my-ca/ca.pem \
+  --ca-key ./my-ca/ca-key.pem
+
+# Generate client certificate
+radix gencert --client --host "client.local"
+
+# With PKCS#12 for Java/browsers
+radix gencert --pkcs12 --pkcs12-password mypassword
+```
+
+---
+
+## Shared Infrastructure
+
+### Metrics
+
+All server commands share the metrics infrastructure:
+
+```yaml
+# Available to all commands via global flags
+--metrics           # Enable metrics endpoint (default: true)
+--metrics-path      # Endpoint path (default: /_metrics)
+--metrics-format    # Format: json, prometheus (default: json)
+```
+
+See `internal/metrics/` for implementation.
+
+### Logging
+
+All commands support consistent logging:
+
+```yaml
+# Global logging flags
+--verbose, -v       # Verbose output
+--quiet, -q         # Suppress output
+--log-format        # Format: text, json (default: text)
+--log-level         # Level: debug, info, warn, error (default: info)
+--access-log        # Access log format: common, combined, json, dev
+```
+
+### TLS
+
+All server commands support TLS via shared flags:
+
+```yaml
+--tls               # Enable HTTPS
+--cert              # Certificate file path
+--key               # Private key file path
+--ca                # CA certificate (for client verification)
+--client-auth       # Require client certificates
+--tls-min-version   # Minimum TLS version (1.2, 1.3)
+```
+
+### Graceful Shutdown
+
+All servers implement graceful shutdown:
+
+```go
+func (s *Server) Start(ctx context.Context) error {
+    server := &http.Server{
+        Addr:    s.addr,
+        Handler: s.handler,
+    }
+
+    go func() {
+        <-ctx.Done()
+        shutdownCtx, cancel := context.WithTimeout(
+            context.Background(),
+            s.shutdownTimeout,
+        )
+        defer cancel()
+        server.Shutdown(shutdownCtx)
+    }()
+
+    return server.ListenAndServe()
+}
+```
+
+---
+
+## Configuration Reference
+
+### Global Configuration
+
+```yaml
+# radix.yml - Global configuration
+
+# Global settings (apply to all commands)
+global:
+  port: 8080
+  host: localhost
+  verbose: false
+
+  # TLS (shared)
+  tls:
+    enabled: false
+    cert: ./certs/cert.pem
+    key: ./certs/key.pem
+    ca: ./certs/ca.pem
+    client_auth: false
+    min_version: "1.2"
+
+  # Metrics (shared)
+  metrics:
+    enabled: true
+    path: /_metrics
+    format: json  # json, prometheus
+
+  # Logging (shared)
+  logging:
+    level: info
+    format: text  # text, json
+    access_log: dev  # common, combined, json, dev
+
+# Command-specific settings
+serve:
+  # ... (see serve section)
+
+proxy:
+  # ... (see proxy section)
+
+echo:
+  # ... (see echo section)
+
+mock:
+  # ... (see mock section)
+
+gencert:
+  # ... (see gencert section)
+```
+
+### Environment Variables
+
+All configuration options can be set via environment variables:
+
+```bash
+RADIX_PORT=3000
+RADIX_HOST=0.0.0.0
+RADIX_VERBOSE=true
+
+# TLS
+RADIX_TLS_ENABLED=true
+RADIX_TLS_CERT=./certs/cert.pem
+RADIX_TLS_KEY=./certs/key.pem
+
+# Command-specific
+RADIX_SERVE_DIR=./public
+RADIX_SERVE_SPA=true
+RADIX_PROXY_TARGET=http://localhost:3000
+```
+
+---
+
+## References
+
+### Research Sources
+
+- [Caddy Web Server Features](https://caddyserver.com/features)
+- [nginx Reverse Proxy Guide](https://www.getpagespeed.com/server-setup/nginx/nginx-reverse-proxy)
+- [http-server (npm)](https://www.npmjs.com/package/http-server)
+- [serve by Vercel](https://github.com/vercel/serve)
+- [SSE Proxy Configuration](https://medium.com/@wang645788/troubleshooting-server-sent-events-sse-in-a-multi-service-architecture-5084ce155ea0)
+- [nginx SSE Optimization](https://www.digitalocean.com/community/questions/nginx-optimization-for-server-sent-events-sse)
+
+### Related Documentation
+
+- [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) - Project roadmap
+- [CLAUDE.md](./CLAUDE.md) - AI assistant guide
+- [CONTRIBUTING.md](./CONTRIBUTING.md) - Contributor guidelines
+
+---
+
+**Document Maintainers**: Project Contributors
+**Feedback**: Open an issue at https://github.com/osuritz/radix/issues
