@@ -14,7 +14,7 @@ This document provides comprehensive design specifications for all planned Radix
 |---------|--------|----------|-------|
 | [Serve Command](#serve-command) | Approved | @osuritz | nginx-style index fallback, SPA routing |
 | [Proxy Command](#proxy-command) | Approved | @osuritz | SSE/streaming support, no load balancing |
-| [Echo Command](#echo-command) | Pending Review | | |
+| [Echo Command](#echo-command) | Approved | @osuritz | |
 | [Mock Command](#mock-command) | Pending Review | | |
 | [GenCert Command](#gencert-command) | Approved | @osuritz | |
 | [Shared Infrastructure](#shared-infrastructure) | Approved | @osuritz | Visual dashboard, no Prometheus |
