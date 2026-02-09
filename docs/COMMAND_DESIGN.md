@@ -17,7 +17,7 @@ This document provides comprehensive design specifications for all planned Radix
 | [Echo Command](#echo-command) | Pending Review | | |
 | [Mock Command](#mock-command) | Pending Review | | |
 | [GenCert Command](#gencert-command) | Approved | @osuritz | |
-| [Shared Infrastructure](#shared-infrastructure) | Pending Review | | |
+| [Shared Infrastructure](#shared-infrastructure) | Approved | @osuritz | Visual dashboard, no Prometheus |
 
 ---
 
