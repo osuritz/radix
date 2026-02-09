@@ -498,6 +498,16 @@ radix proxy [target] [flags]
 | `--cors` | | bool | `false` | Add CORS headers to responses |
 | `--cors-origin` | | string | `*` | Access-Control-Allow-Origin |
 
+#### Auth Extensions
+
+Radix supports pluggable auth header injection via the `HeaderProvider` Go interface. This is designed for corporate forks that compile in a custom provider (e.g., Okta, Azure AD) so that auth headers are injected automatically — no per-engineer configuration needed.
+
+**How it works:** If a fork registers exactly one custom `HeaderProvider`, it is used automatically for all proxied requests. No CLI flags or YAML config required. Engineers just run `radix proxy` and get auth headers.
+
+**Built-in provider:** `static` — Injects fixed headers from the `--header` flag or config file. Only used when no custom provider is registered.
+
+See [IMPLEMENTATION_PLAN.md Section 15](../IMPLEMENTATION_PLAN.md#15-auth-extensions--middleware-extensibility) for the full `HeaderProvider` interface and fork integration pattern.
+
 #### Logging & Debugging
 
 | Flag | Short | Type | Default | Description |
@@ -578,6 +588,17 @@ proxy:
     cert: ./certs/client.pem
     key: ./certs/client-key.pem
     server_name: api.internal
+
+  # Auth extensions (HeaderProvider)
+  # If a fork registers a custom HeaderProvider (e.g., Okta), it is used
+  # automatically — no configuration needed. This section is only required
+  # when multiple providers are registered and you need to select one,
+  # or to pass provider-specific settings.
+  # See IMPLEMENTATION_PLAN.md Section 15 for the HeaderProvider interface.
+  # auth:
+  #   provider: okta          # Only needed to disambiguate multiple providers
+  #   config:                 # Optional provider-specific settings
+  #     audience: "api.internal"
 
   # CORS
   cors:
@@ -831,6 +852,10 @@ radix proxy http://api.example.com \
 # Development proxy with TLS skip
 radix proxy https://self-signed.local:8443 \
   --tls-skip-verify
+
+# If your fork compiles in an auth provider (e.g., Okta),
+# it's used automatically — no flags needed:
+radix proxy http://backend:8080
 ```
 
 ---
@@ -2105,6 +2130,7 @@ RADIX_PROXY_TARGET=http://localhost:3000
 ### Related Documentation
 
 - [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) - Project roadmap
+- [CUSTOM_AUTH_PROVIDER.md](./CUSTOM_AUTH_PROVIDER.md) - Guide: adding a custom auth provider to a fork
 - [CLAUDE.md](./CLAUDE.md) - AI assistant guide
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - Contributor guidelines
 

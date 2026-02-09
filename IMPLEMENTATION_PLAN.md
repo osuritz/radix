@@ -794,14 +794,31 @@ mock:
   - [ ] Add serve-specific metrics (cache hits, file types, etc.)
   - [ ] Tests for serve command
 
+- [ ] Implement auth extensions infrastructure
+  - [ ] Define `HeaderProvider` interface in `internal/server/middleware/auth.go`
+  - [ ] Implement `InjectHeaders` middleware using `HeaderProvider`
+  - [ ] Implement provider registry (`RegisterHeaderProvider`, `GetHeaderProvider`, `ResolveProvider`)
+  - [ ] Implement auto-detection: single registered provider used without config
+  - [ ] Implement `StaticProvider` for fixed headers from config (fallback)
+  - [ ] Add optional `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
+  - [ ] Add auth provider metrics (injections, errors, latency)
+  - [ ] Tests for `HeaderProvider` interface compliance
+  - [ ] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
+  - [ ] Tests for `StaticProvider`
+  - [ ] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
+  - [ ] Document fork integration pattern in code comments
+  - [ ] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
+
 - [ ] Implement `proxy` command (HTTP)
   - [ ] Basic reverse proxy
-  - [ ] Header manipulation
+  - [ ] Header manipulation (static headers from config)
+  - [ ] Wire `InjectHeaders` middleware into proxy handler chain
   - [ ] Path rewriting
   - [ ] WebSocket support
   - [ ] Integrate metrics middleware
   - [ ] Add proxy-specific metrics (backend response times, errors, etc.)
   - [ ] Tests for proxy command
+  - [ ] Integration test: proxy with `StaticProvider` auth headers
 
 ### Phase 6: Core Commands (HTTPS)
 - [ ] **TLS Phase 3a: Serve Command TLS**
@@ -1121,14 +1138,14 @@ changelog:
 ## 9. Non-Goals (v1.0)
 
 To keep scope manageable:
-- ❌ Authentication/Authorization
 - ❌ Database integration
 - ❌ Clustering/distributed mode
 - ❌ GUI/Web UI
-- ❌ Plugins/extensions
 - ❌ Advanced load balancing
 
 These can be considered for future versions based on user feedback.
+
+**Note:** Auth header injection and middleware extensions are in scope via the Go interface-based extension model (see [Section 15: Auth Extensions](#15-auth-extensions--middleware-extensibility)). This supports forks that need to integrate with corporate identity providers (Okta, Azure AD, etc.) without requiring per-engineer configuration.
 
 ## 10. Platform Support & Priorities
 
@@ -1313,7 +1330,280 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
 
 ---
 
-## 15. Design Decisions Summary
+## 15. Auth Extensions & Middleware Extensibility
+
+### Motivation
+
+Radix is used in corporate environments where HTTP traffic passes through zero-trust gateways (e.g., Okta, Azure AD, Cloudflare Access). When developing locally against backend services that sit behind such gateways, developers need their proxy to inject valid auth headers — tokens that expire and require refresh logic from an internal credential library.
+
+Static header configuration doesn't solve this: tokens rotate, and requiring every engineer to configure credential-fetching commands per-machine is fragile. Instead, Radix exposes a **Go interface** that forks can implement with organization-specific credential logic, compiled directly into the binary.
+
+### Design: HeaderProvider Interface
+
+The extension point is a single interface in the middleware layer:
+
+```go
+// internal/server/middleware/auth.go
+
+// HeaderProvider supplies headers to inject into outbound proxy requests.
+// Implementations handle credential fetching, caching, and refresh.
+// Called per-request — implementations should cache internally.
+type HeaderProvider interface {
+    // Headers returns additional headers to set on the request.
+    // The request is provided for context (e.g., to vary headers by path).
+    Headers(ctx context.Context, req *http.Request) (http.Header, error)
+
+    // Name returns a human-readable name for logging/metrics (e.g., "okta", "static").
+    Name() string
+}
+```
+
+### Built-in Providers
+
+Radix ships with one built-in provider:
+
+**StaticProvider** — Injects fixed headers from configuration. Covers the simple case where tokens are long-lived or manually set.
+
+```go
+// internal/server/middleware/auth_static.go
+type StaticProvider struct {
+    headers http.Header
+}
+
+func NewStaticProvider(headers map[string]string) *StaticProvider { ... }
+func (s *StaticProvider) Headers(ctx context.Context, req *http.Request) (http.Header, error) { ... }
+func (s *StaticProvider) Name() string { return "static" }
+```
+
+Configured via the existing `proxy.headers` field:
+```yaml
+proxy:
+  target: http://localhost:3000
+  headers:
+    - "X-Custom-Header: some-value"
+    - "X-Api-Key: dev-key-123"
+```
+
+### Provider Registry
+
+A simple registry allows forks to register custom providers at init time. The key design choice: **if exactly one custom provider is registered, it is used automatically.** No YAML config or CLI flags required — engineers just run `radix proxy` and get auth headers.
+
+```go
+// internal/server/middleware/auth_registry.go
+
+var (
+    providersMu sync.RWMutex
+    providers   = map[string]HeaderProvider{} // keyed by provider name
+)
+
+// RegisterHeaderProvider registers a named HeaderProvider.
+// Call this from an init() function in your fork.
+func RegisterHeaderProvider(name string, p HeaderProvider) {
+    providersMu.Lock()
+    defer providersMu.Unlock()
+    providers[name] = p
+}
+
+// GetHeaderProvider returns a registered provider by name, or nil.
+func GetHeaderProvider(name string) HeaderProvider {
+    providersMu.RLock()
+    defer providersMu.RUnlock()
+    return providers[name]
+}
+
+// ResolveProvider returns the provider to use based on config and registry state.
+// Resolution order:
+//   1. If config specifies a provider name, use that (error if not found)
+//   2. If exactly one custom provider is registered, use it automatically
+//   3. Fall back to StaticProvider (from proxy.headers config)
+//   4. nil if no headers configured and no providers registered
+func ResolveProvider(configName string, staticHeaders []string) HeaderProvider {
+    providersMu.RLock()
+    defer providersMu.RUnlock()
+
+    // Explicit config wins
+    if configName != "" {
+        return providers[configName]
+    }
+
+    // Auto-detect: single registered custom provider
+    if len(providers) == 1 {
+        for _, p := range providers {
+            return p
+        }
+    }
+
+    // Fall back to static headers from config
+    if len(staticHeaders) > 0 {
+        return NewStaticProvider(parseHeaders(staticHeaders))
+    }
+
+    return nil
+}
+```
+
+### Middleware Integration
+
+The auth middleware sits in the handler chain between logging/metrics and the proxy handler:
+
+```go
+// internal/server/middleware/auth.go
+
+func InjectHeaders(provider HeaderProvider) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            hdrs, err := provider.Headers(r.Context(), r)
+            if err != nil {
+                // Log error, return 502 Bad Gateway
+                http.Error(w, "auth provider error", http.StatusBadGateway)
+                return
+            }
+            for key, vals := range hdrs {
+                for _, v := range vals {
+                    r.Header.Set(key, v)
+                }
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+Request flow with auth middleware:
+```
+Request → Metrics → Logging → InjectHeaders(provider) → ReverseProxy → Backend
+```
+
+### Configuration
+
+The `auth` config section is **optional**. Most forks won't need it — a single registered provider is used automatically. Config is only needed to disambiguate multiple providers or pass provider-specific settings:
+
+```yaml
+# Typical fork usage: no auth config needed at all.
+# The compiled-in provider is auto-detected.
+proxy:
+  target: http://localhost:3000
+
+# Only if you need provider-specific config or have multiple providers:
+proxy:
+  target: http://localhost:3000
+  auth:
+    provider: okta              # Only needed when multiple providers are registered
+    config:                     # Optional provider-specific settings
+      audience: "api.internal"
+```
+
+```go
+// Addition to internal/config/config.go
+type AuthConfig struct {
+    Provider string            `mapstructure:"provider"`  // Optional: provider name (auto-detected if omitted)
+    Config   map[string]any    `mapstructure:"config"`    // Optional: provider-specific configuration
+}
+
+// Updated ProxyConfig
+type ProxyConfig struct {
+    // ... existing fields ...
+    Auth AuthConfig `mapstructure:"auth"`
+}
+```
+
+### Fork Integration Pattern
+
+A team forking Radix to add Okta support would:
+
+1. **Create a provider file** (e.g., `internal/auth/okta.go`):
+```go
+package auth
+
+import (
+    "context"
+    "net/http"
+    "sync"
+    "time"
+
+    "github.com/yourorg/internal-okta-lib"
+    "github.com/osuritz/radix/internal/server/middleware"
+)
+
+type OktaProvider struct {
+    client   *okta.Client
+    mu       sync.RWMutex
+    token    string
+    expiry   time.Time
+}
+
+func (o *OktaProvider) Name() string { return "okta" }
+
+func (o *OktaProvider) Headers(ctx context.Context, req *http.Request) (http.Header, error) {
+    token, err := o.cachedToken(ctx)
+    if err != nil {
+        return nil, err
+    }
+    h := http.Header{}
+    h.Set("Authorization", "Bearer "+token)
+    return h, nil
+}
+
+func (o *OktaProvider) cachedToken(ctx context.Context) (string, error) {
+    o.mu.RLock()
+    if time.Now().Before(o.expiry) {
+        defer o.mu.RUnlock()
+        return o.token, nil
+    }
+    o.mu.RUnlock()
+
+    o.mu.Lock()
+    defer o.mu.Unlock()
+    // Double-check after acquiring write lock
+    if time.Now().Before(o.expiry) {
+        return o.token, nil
+    }
+    token, expiry, err := o.client.GetToken(ctx)
+    if err != nil {
+        return "", err
+    }
+    o.token = token
+    o.expiry = expiry
+    return token, nil
+}
+
+func init() {
+    middleware.RegisterHeaderProvider("okta", &OktaProvider{
+        client: okta.NewClient(),
+    })
+}
+```
+
+2. **Import it** in their fork's `main.go`:
+```go
+package main
+
+import (
+    _ "github.com/yourorg/radix-fork/internal/auth" // registers okta provider
+    "github.com/osuritz/radix/cmd/radix"
+)
+```
+
+That's it. Since the fork registers exactly one custom provider, it's auto-detected. Engineers just run `radix proxy http://backend:8080` and get Okta headers — no YAML config, no CLI flags, no per-machine setup.
+
+For a complete walkthrough with a bearer token provider, tests, and real-world `TokenSource` examples (Okta, Vault, AWS STS), see [`docs/CUSTOM_AUTH_PROVIDER.md`](./docs/CUSTOM_AUTH_PROVIDER.md).
+
+### Metrics Integration
+
+The auth middleware reports to the existing metrics collector:
+- `auth_header_injections_total` — successful injections
+- `auth_provider_errors_total` — provider failures (with provider name label)
+- `auth_provider_latency_ms` — time spent in `Headers()` call
+
+### Constraints & Non-Goals for Auth Extensions
+
+- **No dynamic plugin loading** (no `plugin.Open`, no shared libraries). Go's plugin system is fragile and platform-limited. Forks compile providers in.
+- **No scripting runtime** (no Lua, Wasm, etc.). The complexity isn't justified for header injection.
+- **No built-in OAuth/OIDC flows**. Radix doesn't implement token exchange — that's the provider's job.
+- **Interface is per-proxy, not per-route**. A single provider handles all requests for a proxy instance. Route-level provider selection is a future consideration.
+- **Providers must be thread-safe**. The middleware calls `Headers()` concurrently.
+
+## 16. Design Decisions Summary
 
 **✓ Confirmed for v1.0:**
 - HTTPS/TLS support (phased: generate certs → load certs → integrate per command)
@@ -1325,12 +1615,18 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
   - Windows: Authenticode signing
   - Linux: GPG-signed checksums
 - `go install` support for all platforms
+- Auth extensions via `HeaderProvider` interface (Go interface, no dynamic plugins)
+  - Built-in `StaticProvider` for fixed headers
+  - Provider registry for fork-based custom providers (Okta, Azure AD, etc.)
+  - Middleware-based injection in proxy handler chain
 
 **✗ Deferred to future versions:**
 - Interactive config generation mode
 - Combo mode (multiple servers simultaneously)
 - Package managers (Homebrew, Chocolatey, Scoop, apt, snap)
 - Docker images
-- Authentication/authorization
+- Built-in OAuth/OIDC token exchange flows
+- Per-route auth provider selection
+- Dynamic plugin loading (shared libraries, Lua, Wasm)
 - Database integration
 - Clustering/distributed mode
