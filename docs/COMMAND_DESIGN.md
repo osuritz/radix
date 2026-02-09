@@ -3,8 +3,21 @@
 This document provides comprehensive design specifications for all planned Radix commands. Each section details the command's purpose, CLI interface, configuration options, implementation considerations, and examples.
 
 **Document Version**: 1.0.0
-**Last Updated**: 2026-02-08
+**Last Updated**: 2026-02-09
 **Status**: Draft
+
+---
+
+## Review Status
+
+| Section | Status | Reviewer | Notes |
+|---------|--------|----------|-------|
+| [Serve Command](#serve-command) | Approved | @osuritz | nginx-style index fallback, SPA routing |
+| [Proxy Command](#proxy-command) | Approved | @osuritz | SSE/streaming support, no load balancing |
+| [Echo Command](#echo-command) | Pending Review | | |
+| [Mock Command](#mock-command) | Pending Review | | |
+| [GenCert Command](#gencert-command) | Pending Review | | |
+| [Shared Infrastructure](#shared-infrastructure) | Pending Review | | |
 
 ---
 
