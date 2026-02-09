@@ -1103,9 +1103,8 @@ radix mock [config-file] [flags]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--httpbin` | | bool | `true` | Enable built-in httpbin endpoints |
+| `--builtin` | | bool | `true` | Enable built-in httpbin-style endpoints |
 | `--prefix` | | string | `` | Prefix for built-in endpoints (e.g., `/_`) |
-| `--no-landing` | | bool | `false` | Disable the browser landing page at root |
 
 #### Behavior
 
@@ -1119,7 +1118,7 @@ radix mock [config-file] [flags]
 
 ### Built-in Endpoints (httpbin-style)
 
-When `--httpbin` is enabled (default), these endpoints are available with zero configuration:
+When `--builtin` is enabled (default), these endpoints are available with zero configuration:
 
 #### HTTP Methods
 
@@ -1239,128 +1238,68 @@ When `--httpbin` is enabled (default), these endpoints are available with zero c
 }
 ```
 
-### Landing Page (Browser UI)
+### Landing Page (Browser Access)
 
-When a browser requests the root path (`GET /`), the mock server serves an interactive landing page instead of a JSON response. This provides a discoverable, self-documenting interface similar to [httpbin.org](https://httpbin.org), but built with modern tooling.
+When accessing `http://localhost:8080/` in a browser, the mock server displays an
+interactive landing page (inspired by httpbin.org) that lets developers explore
+all available endpoints.
 
-#### Detection
+**Design Requirements:**
+- Built with TailwindCSS (included via CDN for simplicity)
+- Single self-contained HTML page (no external dependencies beyond Tailwind CDN)
+- Dark/light mode support (respects `prefers-color-scheme`)
+- Mobile responsive
 
-The server detects browser requests by checking the `Accept` header for `text/html`. Non-browser clients (curl, HTTPie, programmatic requests) hitting `GET /` receive the standard JSON response from `/anything`.
-
-```go
-func isBrowserRequest(r *http.Request) bool {
-    accept := r.Header.Get("Accept")
-    return strings.Contains(accept, "text/html")
-}
-```
-
-#### Design & Styling
-
-The landing page is a single self-contained HTML document (no external asset requests) styled with **Tailwind CSS** (via CDN) and using vanilla JavaScript for interactivity.
-
-**Visual design principles:**
-- Clean, modern appearance with a neutral color palette
-- Responsive layout that works on desktop and mobile
-- Consistent with the Radix brand (developer-focused, no-nonsense)
-- Dark/light mode support via Tailwind's `dark:` variants and `prefers-color-scheme`
-
-**Page structure:**
+**Layout:**
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Header: Radix Mock Server                          │
-│  Subtitle: "A local HTTP Request & Response Service"│
-│  Version badge, base URL display                    │
-├─────────────────────────────────────────────────────┤
-│  Quick Start box:                                   │
-│    curl localhost:8080/get                           │
-│    curl -X POST localhost:8080/post                  │
-│    (with copy-to-clipboard buttons)                 │
-├─────────────────────────────────────────────────────┤
-│  Endpoint sections (collapsible):                   │
-│  ┌─ HTTP Methods ──────────────────────────────┐    │
-│  │  GET  /get          Returns GET data        │    │
-│  │  POST /post         Returns POST data       │    │
-│  │  ...                                        │    │
-│  └─────────────────────────────────────────────┘    │
-│  ┌─ Request Inspection ────────────────────────┐    │
-│  │  GET /ip            Returns origin IP       │    │
-│  │  ...                                        │    │
-│  └─────────────────────────────────────────────┘    │
-│  ┌─ Status Codes ─────────────────────────────┐    │
-│  │  ...                                        │    │
-│  └─────────────────────────────────────────────┘    │
-│  ... (all endpoint categories)                      │
-├─────────────────────────────────────────────────────┤
-│  Footer: "Powered by Radix · GitHub link"           │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  radix mock                                        [Dark Mode]  │
+│  HTTP Request & Response Testing Service                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ HTTP Methods    │  │ Request Inspect │  │ Status Codes    │ │
+│  │ ─────────────── │  │ ─────────────── │  │ ─────────────── │ │
+│  │ GET  /get       │  │ GET  /ip        │  │ GET  /status/:n │ │
+│  │ POST /post      │  │ GET  /uuid      │  │                 │ │
+│  │ PUT  /put       │  │ GET  /headers   │  │ Try: /status/418│ │
+│  │ ...             │  │ GET  /user-agent│  │                 │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ Dynamic Data    │  │ Redirects       │  │ Cookies         │ │
+│  │ ─────────────── │  │ ─────────────── │  │ ─────────────── │ │
+│  │ GET /delay/:n   │  │ GET /redirect/:n│  │ GET /cookies    │ │
+│  │ GET /bytes/:n   │  │ GET /redirect-to│  │ GET /cookies/set│ │
+│  │ GET /stream/:n  │  │ ...             │  │ ...             │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+│  ── Custom Routes (from routes.yml) ──────────────────────────  │
+│  POST /api/users          Create a new user                     │
+│  GET  /api/users/:id      Get user by ID                        │
+│  ...                                                            │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  Radix v1.0.0 · Local Development Server · Metrics: :8739      │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-#### Endpoint Sections
+**Features:**
+- Endpoints are clickable (opens in new tab or shows response inline)
+- Each endpoint shows HTTP method with color coding (GET=green, POST=blue, etc.)
+- Description text for each endpoint
+- Collapsible sections for each category
+- If custom routes are loaded, they appear in a separate "Custom Routes" section
+- Quick copy-to-clipboard for curl commands
+- Link to metrics dashboard
 
-Each category from the [Built-in Endpoints](#built-in-endpoints-httpbin-style) tables is rendered as a collapsible section. Sections are **collapsed by default** to keep the page scannable. Clicking a section header toggles its visibility.
-
-Within each section, endpoints are displayed as rows with:
-- **HTTP method badge** — color-coded pill (GET=green, POST=blue, PUT=orange, PATCH=yellow, DELETE=red, `*`=gray), matching common API documentation conventions
-- **Path** — monospace, clickable link that navigates to the endpoint
-- **Description** — short summary text
-
-#### Interactive Features (Vanilla JS)
-
-All interactivity uses native JavaScript — no frameworks or libraries.
-
-| Feature | Behavior |
-|---------|----------|
-| **Section toggle** | Click section header to expand/collapse. Arrow icon rotates to indicate state. Uses CSS transitions for smooth animation. |
-| **Expand/Collapse all** | Button in the header area to expand or collapse all sections at once. |
-| **Copy to clipboard** | Click icon next to curl examples in the Quick Start box to copy the command. Brief "Copied!" tooltip feedback. |
-| **Try it links** | Endpoint paths are `<a>` tags linking to the actual endpoint, so clicking opens the response in the browser. |
-| **Search/filter** | Optional: text input that filters visible endpoints by path or description as the user types. Uses simple `includes()` matching to hide non-matching rows. |
-
-#### Implementation Notes
-
-The landing page HTML is embedded in the Go binary using `//go:embed`:
-
-```go
-package mock
-
-import "embed"
-
-//go:embed landing.html
-var landingPageHTML string
-
-func handleLandingPage(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    w.Write([]byte(landingPageHTML))
-}
-```
-
-**Tailwind CSS inclusion:** Use the Tailwind CDN play script (`<script src="https://cdn.tailwindcss.com"></script>`) in the `<head>`. This is appropriate for a local development tool — no build step needed, and the CDN script is small enough for local use. If the user is offline, the page degrades gracefully (unstyled but still functional and readable thanks to semantic HTML).
-
-**Template variables:** Before serving, the server injects runtime values into the HTML using Go's `strings.Replacer` or `html/template`:
-
-| Placeholder | Value |
-|-------------|-------|
-| `{{.Version}}` | Radix version string |
-| `{{.BaseURL}}` | Server base URL (e.g., `http://localhost:8080`) |
-| `{{.Prefix}}` | Built-in endpoint prefix (if `--prefix` is set) |
-| `{{.CustomRoutesEnabled}}` | Whether custom routes are loaded |
-| `{{.CustomRouteCount}}` | Number of custom routes loaded |
-
-If custom routes are loaded, an additional "Custom Routes" section is displayed on the landing page listing the user-defined routes.
-
-#### Interaction with `--prefix`
-
-When `--prefix` is set (e.g., `--prefix /_api`):
-- The landing page is served at the **root** (`/`), not under the prefix
-- All endpoint links in the landing page are updated to include the prefix (e.g., `/_api/get` instead of `/get`)
-- The base URL display shows the prefix
-
-#### CLI Flag
-
-| Flag | Short | Type | Default | Description |
-|------|-------|------|---------|-------------|
-| `--no-landing` | | bool | `false` | Disable the landing page (root returns JSON like any other endpoint) |
+**Implementation Notes:**
+- Detect browser vs API client via `Accept` header
+  - `Accept: text/html` → serve landing page
+  - `Accept: application/json` or curl → serve JSON (for `/` endpoint)
+- Landing page is generated at startup (not on every request)
+- Tailwind CSS loaded from CDN: `https://cdn.tailwindcss.com`
 
 ### Custom Route Configuration (YAML)
 
@@ -1655,13 +1594,13 @@ radix mock
 # curl localhost:8080/delay/2
 # curl -X POST -d '{"foo":"bar"}' localhost:8080/post
 
-# httpbin endpoints with prefix (avoid conflicts with custom routes)
+# Built-in endpoints with prefix (avoid conflicts with custom routes)
 radix mock --prefix /_test --routes ./api-mocks.yml
 # Built-in: curl localhost:8080/_test/get
 # Custom:   curl localhost:8080/api/users
 
-# Custom routes only (disable httpbin endpoints)
-radix mock --httpbin=false --routes ./api-mocks.yml
+# Custom routes only (disable built-in endpoints)
+radix mock --builtin=false --routes ./api-mocks.yml
 
 # Watch for config changes (hot reload)
 radix mock --routes ./api-mocks.yml --watch
