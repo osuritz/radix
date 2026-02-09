@@ -1078,7 +1078,9 @@ radix echo --log-body --port 9000
 
 ### Purpose
 
-API mocking server that serves predefined responses based on route matching. Enables frontend development without a running backend.
+API mocking server with two modes:
+1. **Built-in httpbin-style endpoints** - Zero-config testing endpoints (inspired by [httpbin.org](https://httpbin.org))
+2. **Custom route configuration** - Project-specific mocks from YAML
 
 ### CLI Interface
 
@@ -1092,10 +1094,17 @@ radix mock [config-file] [flags]
 
 | Flag | Short | Type | Default | Description |
 |------|-------|------|---------|-------------|
-| `--routes` | `-r` | string | `./routes.yml` | Routes configuration file |
 | `--port` | `-p` | int | `8080` | Port to listen on |
 | `--host` | `-H` | string | `localhost` | Host/IP to bind to |
+| `--routes` | `-r` | string | `` | Custom routes config file (YAML) |
 | `--watch` | `-w` | bool | `false` | Watch config file for changes |
+
+#### Built-in Endpoints
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--httpbin` | | bool | `true` | Enable built-in httpbin endpoints |
+| `--prefix` | | string | `` | Prefix for built-in endpoints (e.g., `/_`) |
 
 #### Behavior
 
@@ -1107,14 +1116,131 @@ radix mock [config-file] [flags]
 | `--fail-status` | | int | `500` | Status code for random failures |
 | `--cors` | | bool | `true` | Enable CORS by default |
 
-#### Fallback
+### Built-in Endpoints (httpbin-style)
 
-| Flag | Short | Type | Default | Description |
-|------|-------|------|---------|-------------|
-| `--fallback` | | string | `404` | Unmatched route behavior: `404`, `echo`, `proxy` |
-| `--fallback-target` | | string | `` | Proxy target for fallback |
+When `--httpbin` is enabled (default), these endpoints are available with zero configuration:
 
-### Configuration (YAML)
+#### HTTP Methods
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /get` | Returns GET request data (headers, args, origin, url) |
+| `POST /post` | Returns POST request data including body |
+| `PUT /put` | Returns PUT request data |
+| `PATCH /patch` | Returns PATCH request data |
+| `DELETE /delete` | Returns DELETE request data |
+| `* /anything` | Returns request data for any HTTP method |
+| `* /anything/*` | Returns request data, including the URL path |
+
+#### Request Inspection
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /ip` | Returns the client's origin IP address |
+| `GET /uuid` | Returns a UUID4 |
+| `GET /user-agent` | Returns the User-Agent header |
+| `GET /headers` | Returns all request headers |
+
+#### Status Codes
+
+| Endpoint | Description |
+|----------|-------------|
+| `* /status/:code` | Returns the specified HTTP status code |
+| `* /status/:code1,:code2` | Returns random status from list |
+
+#### Dynamic Data
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /delay/:n` | Delays response by n seconds (max 10) |
+| `GET /bytes/:n` | Returns n random bytes |
+| `GET /stream-bytes/:n` | Streams n random bytes (chunked) |
+| `GET /stream/:n` | Streams n JSON objects |
+| `GET /range/:n` | Returns n bytes, supports Range header |
+| `GET /drip` | Drips data: `?duration=2&numbytes=10&code=200` |
+
+#### Response Formats
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /html` | Returns an HTML page |
+| `GET /xml` | Returns XML content |
+| `GET /json` | Returns JSON content |
+| `GET /robots.txt` | Returns robots.txt rules |
+| `GET /deny` | Returns page denied by robots.txt |
+| `GET /encoding/utf8` | Returns UTF-8 encoded content |
+
+#### Compression
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /gzip` | Returns gzip-encoded response |
+| `GET /deflate` | Returns deflate-encoded response |
+| `GET /brotli` | Returns brotli-encoded response |
+
+#### Redirects
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /redirect/:n` | 302 redirects n times, then returns |
+| `GET /redirect-to?url=` | 302 redirects to the specified URL |
+| `GET /redirect-to?url=&status_code=` | Redirects with custom status |
+| `GET /relative-redirect/:n` | Relative 302 redirects n times |
+| `GET /absolute-redirect/:n` | Absolute 302 redirects n times |
+
+#### Cookies
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /cookies` | Returns current cookies |
+| `GET /cookies/set?name=value` | Sets cookies and redirects to /cookies |
+| `GET /cookies/set/:name/:value` | Sets a cookie |
+| `GET /cookies/delete?name` | Deletes specified cookies |
+
+#### Authentication
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /basic-auth/:user/:pass` | Challenges HTTP Basic Auth |
+| `GET /hidden-basic-auth/:user/:pass` | 404 if auth fails (no challenge) |
+| `GET /bearer` | Checks Bearer token auth |
+
+#### Images
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /image` | Returns image based on Accept header |
+| `GET /image/png` | Returns a PNG image |
+| `GET /image/jpeg` | Returns a JPEG image |
+| `GET /image/webp` | Returns a WebP image |
+| `GET /image/svg` | Returns an SVG image |
+
+#### Caching
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /cache` | Returns 304 if If-Modified-Since/If-None-Match |
+| `GET /cache/:n` | Sets Cache-Control: max-age=n |
+| `GET /etag/:etag` | Responds to If-None-Match/If-Match headers |
+| `GET /response-headers?key=val` | Returns specified headers in response |
+
+**Example built-in endpoint response (`GET /get?foo=bar`):**
+```json
+{
+  "args": {"foo": "bar"},
+  "headers": {
+    "Accept": "*/*",
+    "Host": "localhost:8080",
+    "User-Agent": "curl/8.0.0"
+  },
+  "origin": "127.0.0.1",
+  "url": "http://localhost:8080/get?foo=bar"
+}
+```
+
+### Custom Route Configuration (YAML)
+
+For project-specific mocks, provide a routes file:
 
 ```yaml
 # mock-routes.yml
@@ -1396,25 +1522,59 @@ func (w *ConfigWatcher) Start() error {
 ### Examples
 
 ```bash
-# Start mock server with routes file
-radix mock --routes ./api-mocks.yml
+# Zero-config httpbin-style mock server
+radix mock
 
-# Watch for config changes
+# Test it immediately:
+# curl localhost:8080/get
+# curl localhost:8080/status/404
+# curl localhost:8080/delay/2
+# curl -X POST -d '{"foo":"bar"}' localhost:8080/post
+
+# httpbin endpoints with prefix (avoid conflicts with custom routes)
+radix mock --prefix /_test --routes ./api-mocks.yml
+# Built-in: curl localhost:8080/_test/get
+# Custom:   curl localhost:8080/api/users
+
+# Custom routes only (disable httpbin endpoints)
+radix mock --httpbin=false --routes ./api-mocks.yml
+
+# Watch for config changes (hot reload)
 radix mock --routes ./api-mocks.yml --watch
 
-# Add global latency
-radix mock --routes ./api-mocks.yml --latency 200ms
+# Simulate slow API
+radix mock --latency 200ms
 
-# Chaos testing (10% failure rate)
-radix mock --routes ./api-mocks.yml --fail-rate 10
+# Chaos testing (10% random failures)
+radix mock --fail-rate 10
 
-# Fallback to proxy for unmatched routes
+# Combine with proxy fallback
 radix mock --routes ./api-mocks.yml \
   --fallback proxy \
   --fallback-target http://localhost:3000
+```
 
-# CORS disabled (for testing)
-radix mock --routes ./api-mocks.yml --cors=false
+**Quick testing with curl:**
+```bash
+# Test status codes
+curl -i localhost:8080/status/201
+curl -i localhost:8080/status/500
+
+# Test delays
+curl localhost:8080/delay/3  # 3 second delay
+
+# Inspect your request
+curl -X POST -H "Authorization: Bearer token" \
+  -d '{"name":"test"}' localhost:8080/anything
+
+# Test redirects
+curl -L localhost:8080/redirect/3  # follows 3 redirects
+
+# Test basic auth
+curl -u user:pass localhost:8080/basic-auth/user/pass
+
+# Get random bytes
+curl localhost:8080/bytes/1024 -o random.bin
 ```
 
 ---
