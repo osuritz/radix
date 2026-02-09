@@ -47,6 +47,7 @@ Tracks implementation tasks for each command. Each task is designed to be a sing
 | 5.1.2 | CORS middleware | | ⬜ | `internal/server/middleware/cors.go` — Configurable CORS with origin, methods, headers, credentials, max-age. Preflight (OPTIONS) handling. Tests for simple requests, preflight, wildcard vs specific origins, credentials mode. |
 | 5.1.3 | Recovery middleware | | ⬜ | `internal/server/middleware/recovery.go` — Panic recovery returning 500. Stack trace logging in verbose mode. Tests for panic recovery, response code, logging output. |
 | 5.1.4 | Metrics dashboard (SVG) | | ⬜ | `internal/metrics/dashboard.go` — Visual dashboard on dedicated port (default 8739). Status code pie chart (SVG), request trend line chart (SVG), recent requests table (last 1000, circular buffer). `--metrics-port` and `--no-metrics` flags. Tests for dashboard rendering, buffer bounds, concurrent access. Based on radix-serve PR #3 design. |
+| 5.1.5 | Logging enhancements | | ⬜ | Refactor `internal/server/middleware/logging.go`. **TTY output (dev format)**: compact colored output (`METHOD /path STATUS SIZE DURATION`), respects both `--no-color` flag and `NO_COLOR` env var ([no-color.org](https://no-color.org) standard), auto-detect TTY via `os.Stdout` isatty check, optional HH:MM:SS timestamp prefix in TTY mode (`--log-timestamp`). **File output**: `--access-log <path>` writes to file in extended CLF (combined) format independently of TTY output — when set, terminal shows dev format and file gets combined format simultaneously. Configurable file format override (`--access-log-format common|combined|json`). File rotation not in scope (use external logrotate). **Dual writer**: `io.Writer` abstraction supporting concurrent TTY + file output. Tests for: NO_COLOR env var, isatty detection, dual output to TTY + file, file format independence, concurrent write safety, all format variants. |
 
 ### 5.2 Serve Command
 
@@ -154,6 +155,7 @@ Phase 5 (Core HTTP)
   5.1.2 ──────────────────────────→ 5.2.9, 5.3.9
   5.1.3 ──────────────────────────→ 5.2.9, 5.3.9
   5.1.4 ──────────────────────────→ 5.2.9, 5.3.9
+  5.1.5 ──────────────────────────→ 5.2.9, 5.3.9
   5.2.1 → 5.2.2 → 5.2.3 ────────→ 5.2.9
   5.2.4, 5.2.5, 5.2.6, 5.2.7 ───→ 5.2.9 (independent of each other)
   5.2.8 ─────────────────────────→ 5.2.9
@@ -191,7 +193,7 @@ Multiple agents can work concurrently on independent tasks within the same phase
 
 **Phase 5 parallel groups:**
 - Group A: 5.1.1 (base server) — required first
-- Group B (after 5.1.1): 5.1.2, 5.1.3, 5.1.4 — all independent
+- Group B (after 5.1.1): 5.1.2, 5.1.3, 5.1.4, 5.1.5 — all independent
 - Group C (after 5.1.1): 5.2.1, 5.3.1 — serve and proxy cores in parallel
 - Group D (after 5.2.1): 5.2.2, 5.2.4, 5.2.5, 5.2.6, 5.2.7, 5.2.8 — serve features in parallel
 - Group E (after 5.3.1): 5.3.2, 5.3.3, 5.3.4, 5.3.5, 5.3.6, 5.3.7, 5.3.8 — proxy features in parallel

@@ -1897,15 +1897,53 @@ Prometheus, Grafana, etc. If users need Prometheus, they can scrape the JSON end
 
 ### Logging
 
-All commands support consistent logging:
+All commands support two independent logging outputs: **terminal** and **file**.
+
+#### Terminal output (TTY)
+
+The default terminal format is `dev` — a compact, colored format optimized for glanceability:
+
+```
+GET /index.html 200 2.3KB 12ms
+POST /api/users 201 48B 340ms
+GET /missing 404 - 1ms
+```
+
+- **Method** color-coded: GET=cyan, POST=green, PUT=yellow, DELETE=red, PATCH=magenta
+- **Status** color-coded: 2xx=green, 3xx=cyan, 4xx=yellow, 5xx=red
+- Colors disabled when `--no-color` flag is set **or** `NO_COLOR` env var is set (per [no-color.org](https://no-color.org))
+- Colors also auto-disabled when stdout is not a TTY (e.g., piped to a file)
+- Optional timestamp prefix with `--log-timestamp` (shows `HH:MM:SS`)
+
+#### File output (access log)
+
+When `--access-log <path>` is set, structured logs are written to the file **independently** of terminal output. The terminal continues showing the compact `dev` format while the file receives full detail.
+
+```bash
+# Terminal shows dev format, file gets combined (extended CLF)
+radix serve --access-log ./access.log
+
+# Override file format
+radix serve --access-log ./access.log --access-log-format json
+```
+
+File format options:
+- `combined` (default): Extended CLF with referrer and user-agent — standard format parseable by GoAccess, AWStats, etc.
+- `common`: Standard CLF (no referrer/user-agent)
+- `json`: One JSON object per line (structured, machine-parseable)
+
+File rotation is **not** in scope — use OS-level tools (logrotate, newsyslog) for rotation.
+
+#### Global logging flags
 
 ```yaml
-# Global logging flags
---verbose, -v       # Verbose output
---quiet, -q         # Suppress output
---log-format        # Format: text, json (default: text)
---log-level         # Level: debug, info, warn, error (default: info)
---access-log        # Access log format: common, combined, json, dev
+--verbose, -v           # Verbose output (debug-level messages)
+--quiet, -q             # Suppress terminal request logging
+--no-color              # Disable colored output
+--log-timestamp         # Show HH:MM:SS timestamp in terminal output
+--log-level             # Level: debug, info, warn, error (default: info)
+--access-log            # Path to access log file (enables file logging)
+--access-log-format     # File format: common, combined, json (default: combined)
 ```
 
 ### TLS
@@ -2008,9 +2046,11 @@ global:
 
   # Logging (shared)
   logging:
-    level: info
-    format: text  # text, json
-    access_log: dev  # common, combined, json, dev
+    level: info               # debug, info, warn, error
+    no_color: false            # also respects NO_COLOR env var
+    timestamp: false           # HH:MM:SS prefix in terminal
+    access_log: ""             # path to access log file (empty = disabled)
+    access_log_format: combined  # common, combined, json
 
 # Command-specific settings
 serve:
