@@ -682,6 +682,25 @@ handler := Chain(
 )
 ```
 
+### Auth Extensions (HeaderProvider)
+
+Radix supports pluggable auth header injection via the `HeaderProvider` interface, designed for corporate forks that need to inject tokens (Okta, Azure AD, etc.) into proxied requests:
+
+```go
+// internal/server/middleware/auth.go
+type HeaderProvider interface {
+    Headers(ctx context.Context, req *http.Request) (http.Header, error)
+    Name() string
+}
+```
+
+**Key design points:**
+- Providers are registered at compile time via `RegisterHeaderProvider()` — no dynamic plugins
+- Built-in `StaticProvider` handles fixed headers from config
+- Forks implement the interface and register via `init()`, then configure in `radix.yml`
+- Providers must be thread-safe (`Headers()` is called concurrently)
+- Full design: see `IMPLEMENTATION_PLAN.md` Section 15
+
 ---
 
 ## CI/CD & Release Process

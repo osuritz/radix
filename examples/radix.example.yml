@@ -49,6 +49,13 @@ proxy:
   strip_prefix: ""
   # Headers to add/modify
   headers: []
+  # Auth extensions (HeaderProvider interface)
+  # Use a registered provider to inject auth headers into proxied requests.
+  # Built-in: "static" (uses headers above). Custom providers (e.g., "okta")
+  # are registered by forks at compile time. See IMPLEMENTATION_PLAN.md Section 15.
+  auth:
+    provider: ""       # Provider name (e.g., "static", "okta")
+    config: {}         # Provider-specific configuration
 
 # Echo command configuration
 echo:

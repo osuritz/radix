@@ -498,6 +498,19 @@ radix proxy [target] [flags]
 | `--cors` | | bool | `false` | Add CORS headers to responses |
 | `--cors-origin` | | string | `*` | Access-Control-Allow-Origin |
 
+#### Auth Extensions
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--auth-provider` | | string | `` | Auth provider name (from registry) |
+
+Radix supports pluggable auth header injection via the `HeaderProvider` Go interface. This is designed for corporate forks that need to inject auth tokens (e.g., from Okta, Azure AD) into proxied requests without per-engineer configuration.
+
+**Built-in providers:**
+- `static` — Injects fixed headers from the `--header` flag or config file
+
+**Custom providers** are registered at compile time by forks. See [IMPLEMENTATION_PLAN.md Section 15](../IMPLEMENTATION_PLAN.md#15-auth-extensions--middleware-extensibility) for the full design, including the `HeaderProvider` interface and fork integration pattern.
+
 #### Logging & Debugging
 
 | Flag | Short | Type | Default | Description |
@@ -578,6 +591,14 @@ proxy:
     cert: ./certs/client.pem
     key: ./certs/client-key.pem
     server_name: api.internal
+
+  # Auth extensions (HeaderProvider)
+  # The "static" provider injects fixed headers (see headers.request.add above).
+  # Custom providers (e.g., "okta") are registered by forks at compile time.
+  # See IMPLEMENTATION_PLAN.md Section 15 for the HeaderProvider interface.
+  auth:
+    provider: ""              # Provider name from registry (e.g., "okta", "static")
+    config: {}                # Provider-specific configuration (passed to provider)
 
   # CORS
   cors:
@@ -831,6 +852,10 @@ radix proxy http://api.example.com \
 # Development proxy with TLS skip
 radix proxy https://self-signed.local:8443 \
   --tls-skip-verify
+
+# Proxy with auth provider (registered by fork, e.g., Okta)
+radix proxy http://backend:8080 \
+  --auth-provider okta
 ```
 
 ---
