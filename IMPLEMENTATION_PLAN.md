@@ -797,14 +797,15 @@ mock:
 - [ ] Implement auth extensions infrastructure
   - [ ] Define `HeaderProvider` interface in `internal/server/middleware/auth.go`
   - [ ] Implement `InjectHeaders` middleware using `HeaderProvider`
-  - [ ] Implement provider registry (`RegisterHeaderProvider`, `GetHeaderProvider`)
-  - [ ] Implement `StaticProvider` for fixed headers from config
-  - [ ] Add `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
+  - [ ] Implement provider registry (`RegisterHeaderProvider`, `GetHeaderProvider`, `ResolveProvider`)
+  - [ ] Implement auto-detection: single registered provider used without config
+  - [ ] Implement `StaticProvider` for fixed headers from config (fallback)
+  - [ ] Add optional `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
   - [ ] Add auth provider metrics (injections, errors, latency)
   - [ ] Tests for `HeaderProvider` interface compliance
   - [ ] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
   - [ ] Tests for `StaticProvider`
-  - [ ] Tests for provider registry (register, get, missing provider)
+  - [ ] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
   - [ ] Document fork integration pattern in code comments
 
 - [ ] Implement `proxy` command (HTTP)
@@ -1384,7 +1385,7 @@ proxy:
 
 ### Provider Registry
 
-A simple registry allows forks to register custom providers at init time:
+A simple registry allows forks to register custom providers at init time. The key design choice: **if exactly one custom provider is registered, it is used automatically.** No YAML config or CLI flags required — engineers just run `radix proxy` and get auth headers.
 
 ```go
 // internal/server/middleware/auth_registry.go
@@ -1407,6 +1408,36 @@ func GetHeaderProvider(name string) HeaderProvider {
     providersMu.RLock()
     defer providersMu.RUnlock()
     return providers[name]
+}
+
+// ResolveProvider returns the provider to use based on config and registry state.
+// Resolution order:
+//   1. If config specifies a provider name, use that (error if not found)
+//   2. If exactly one custom provider is registered, use it automatically
+//   3. Fall back to StaticProvider (from proxy.headers config)
+//   4. nil if no headers configured and no providers registered
+func ResolveProvider(configName string, staticHeaders []string) HeaderProvider {
+    providersMu.RLock()
+    defer providersMu.RUnlock()
+
+    // Explicit config wins
+    if configName != "" {
+        return providers[configName]
+    }
+
+    // Auto-detect: single registered custom provider
+    if len(providers) == 1 {
+        for _, p := range providers {
+            return p
+        }
+    }
+
+    // Fall back to static headers from config
+    if len(staticHeaders) > 0 {
+        return NewStaticProvider(parseHeaders(staticHeaders))
+    }
+
+    return nil
 }
 ```
 
@@ -1444,21 +1475,28 @@ Request → Metrics → Logging → InjectHeaders(provider) → ReverseProxy →
 
 ### Configuration
 
-Add `auth` section to proxy config:
+The `auth` config section is **optional**. Most forks won't need it — a single registered provider is used automatically. Config is only needed to disambiguate multiple providers or pass provider-specific settings:
 
 ```yaml
+# Typical fork usage: no auth config needed at all.
+# The compiled-in provider is auto-detected.
+proxy:
+  target: http://localhost:3000
+
+# Only if you need provider-specific config or have multiple providers:
 proxy:
   target: http://localhost:3000
   auth:
-    provider: "static"          # Provider name (matches registry key)
-    # Provider-specific config follows — interpreted by the provider
+    provider: okta              # Only needed when multiple providers are registered
+    config:                     # Optional provider-specific settings
+      audience: "api.internal"
 ```
 
 ```go
 // Addition to internal/config/config.go
 type AuthConfig struct {
-    Provider string            `mapstructure:"provider"`  // Provider name from registry
-    Config   map[string]any    `mapstructure:"config"`    // Provider-specific configuration
+    Provider string            `mapstructure:"provider"`  // Optional: provider name (auto-detected if omitted)
+    Config   map[string]any    `mapstructure:"config"`    // Optional: provider-specific configuration
 }
 
 // Updated ProxyConfig
@@ -1545,15 +1583,7 @@ import (
 )
 ```
 
-3. **Configure** via `radix.yml`:
-```yaml
-proxy:
-  target: http://backend-service:8080
-  auth:
-    provider: okta
-```
-
-Every engineer gets auth headers automatically — no per-machine credential setup.
+That's it. Since the fork registers exactly one custom provider, it's auto-detected. Engineers just run `radix proxy http://backend:8080` and get Okta headers — no YAML config, no CLI flags, no per-machine setup.
 
 ### Metrics Integration
 

@@ -696,8 +696,9 @@ type HeaderProvider interface {
 
 **Key design points:**
 - Providers are registered at compile time via `RegisterHeaderProvider()` — no dynamic plugins
-- Built-in `StaticProvider` handles fixed headers from config
-- Forks implement the interface and register via `init()`, then configure in `radix.yml`
+- **Auto-detection**: if a fork registers one provider, it's used automatically — no config needed
+- Built-in `StaticProvider` handles fixed headers as a fallback
+- Forks implement the interface and register via `init()` — engineers just run `radix proxy`
 - Providers must be thread-safe (`Headers()` is called concurrently)
 - Full design: see `IMPLEMENTATION_PLAN.md` Section 15
 
