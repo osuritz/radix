@@ -6,6 +6,49 @@
 
 Multi-mode HTTP server for local development. Provides static file serving, reverse proxy, request echo, and API mocking capabilities—all running locally with no external services or data leakage. Built in Go for zero-dependency deployment across platforms.
 
+## Who Is This For?
+
+Radix is designed for **local development**, not production traffic. It's built for:
+
+- **Software engineers** who need a quick static file server or API proxy during development
+- **Frontend developers** working on SPAs who need to mock backend APIs
+- **Coding agents and AI assistants** that need reliable HTTP tooling for automated workflows
+- **QA engineers** testing frontend/backend integration locally
+
+If you need a production-grade web server, use nginx, Caddy, or a cloud load balancer instead.
+
+## Features
+
+| Command | Purpose | Example Use Case |
+|---------|---------|------------------|
+| `serve` | Static file server | Serve a React/Vue build folder |
+| `proxy` | Reverse proxy | Forward `/api/*` to a backend service |
+| `echo` | Request debugger | Inspect webhook payloads |
+| `mock` | API mocking | Develop frontend without a running backend |
+| `gencert` | TLS certificates | Generate self-signed certs for HTTPS |
+
+## Quick Start
+
+```bash
+# Install
+go install github.com/osuritz/radix/cmd/radix@latest
+
+# Serve current directory
+radix serve
+
+# Serve with SPA routing
+radix serve ./dist --spa --port 3000
+
+# Proxy API requests
+radix proxy http://localhost:8080 --port 3000
+
+# Echo server for debugging
+radix echo --port 9000
+
+# Mock API endpoints
+radix mock --routes ./api-mocks.yml
+```
+
 ## Development
 
 ### Building
