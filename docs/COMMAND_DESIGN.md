@@ -2090,6 +2090,7 @@ RADIX_PROXY_TARGET=http://localhost:3000
 ### Related Documentation
 
 - [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) - Project roadmap
+- [CUSTOM_AUTH_PROVIDER.md](./CUSTOM_AUTH_PROVIDER.md) - Guide: adding a custom auth provider to a fork
 - [CLAUDE.md](./CLAUDE.md) - AI assistant guide
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - Contributor guidelines
 

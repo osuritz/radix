@@ -807,6 +807,7 @@ mock:
   - [ ] Tests for `StaticProvider`
   - [ ] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
   - [ ] Document fork integration pattern in code comments
+  - [ ] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
 
 - [ ] Implement `proxy` command (HTTP)
   - [ ] Basic reverse proxy
@@ -1584,6 +1585,8 @@ import (
 ```
 
 That's it. Since the fork registers exactly one custom provider, it's auto-detected. Engineers just run `radix proxy http://backend:8080` and get Okta headers — no YAML config, no CLI flags, no per-machine setup.
+
+For a complete walkthrough with a bearer token provider, tests, and real-world `TokenSource` examples (Okta, Vault, AWS STS), see [`docs/CUSTOM_AUTH_PROVIDER.md`](./docs/CUSTOM_AUTH_PROVIDER.md).
 
 ### Metrics Integration
 
