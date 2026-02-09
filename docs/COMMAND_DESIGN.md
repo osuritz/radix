@@ -478,15 +478,6 @@ radix proxy [target] [flags]
 | `--backend-cert` | | string | `` | Client certificate for backend mTLS |
 | `--backend-key` | | string | `` | Client key for backend mTLS |
 
-#### Load Balancing (Future)
-
-| Flag | Short | Type | Default | Description |
-|------|-------|------|---------|-------------|
-| `--targets` | | []string | `[]` | Multiple backend targets |
-| `--lb-strategy` | | string | `round-robin` | Strategy: `round-robin`, `random`, `least-conn` |
-| `--health-check` | | string | `` | Health check endpoint |
-| `--health-interval` | | duration | `10s` | Health check interval |
-
 #### CORS (Proxy-Level)
 
 | Flag | Short | Type | Default | Description |
@@ -510,14 +501,6 @@ proxy:
   target: http://localhost:3000
   port: 8080
   host: localhost
-
-  # Multiple targets (load balancing)
-  targets:
-    - url: http://localhost:3001
-      weight: 2
-    - url: http://localhost:3002
-      weight: 1
-  lb_strategy: round-robin  # round-robin, random, least-conn, ip-hash
 
   # Path handling
   strip_prefix: /api
@@ -582,15 +565,6 @@ proxy:
     cert: ./certs/client.pem
     key: ./certs/client-key.pem
     server_name: api.internal
-
-  # Health checks
-  health:
-    enabled: true
-    path: /health
-    interval: 10s
-    timeout: 5s
-    healthy_threshold: 2
-    unhealthy_threshold: 3
 
   # CORS
   cors:
@@ -844,12 +818,6 @@ radix proxy http://api.example.com \
 # Development proxy with TLS skip
 radix proxy https://self-signed.local:8443 \
   --tls-skip-verify
-
-# Load balanced proxy
-radix proxy \
-  --targets http://localhost:3001,http://localhost:3002 \
-  --lb-strategy round-robin \
-  --health-check /health
 ```
 
 ---
