@@ -16,7 +16,7 @@ This document provides comprehensive design specifications for all planned Radix
 | [Proxy Command](#proxy-command) | Approved | @osuritz | SSE/streaming support, no load balancing |
 | [Echo Command](#echo-command) | Pending Review | | |
 | [Mock Command](#mock-command) | Pending Review | | |
-| [GenCert Command](#gencert-command) | Pending Review | | |
+| [GenCert Command](#gencert-command) | Approved | @osuritz | |
 | [Shared Infrastructure](#shared-infrastructure) | Pending Review | | |
 
 ---
@@ -1623,18 +1623,54 @@ radix gencert --pkcs12 --pkcs12-password mypassword
 
 ## Shared Infrastructure
 
-### Metrics
+### Metrics Dashboard
 
-All server commands share the metrics infrastructure:
+All server commands include a built-in metrics dashboard for live monitoring during development.
 
-```yaml
-# Available to all commands via global flags
---metrics           # Enable metrics endpoint (default: true)
---metrics-path      # Endpoint path (default: /_metrics)
---metrics-format    # Format: json, prometheus (default: json)
+**Flags:**
+
+| Flag | Short | Type | Default | Description |
+|------|-------|------|---------|-------------|
+| `--metrics` | | bool | `true` | Enable metrics dashboard |
+| `--metrics-port` | | int | `8739` | Port for metrics dashboard |
+| `--no-metrics` | | bool | `false` | Disable metrics entirely |
+
+**Dashboard Features:**
+
+The metrics dashboard runs on a dedicated port (default: 8739) and provides:
+
+1. **Status Code Distribution** (Pie Chart)
+   - Color-coded segments: 2xx (green), 3xx (blue), 4xx (orange), 5xx (red)
+   - Live updates as requests come in
+
+2. **Request Trends** (Line Chart)
+   - Requests over time with gridlines
+   - Helps identify traffic patterns during testing
+
+3. **Recent Requests Table**
+   - Last 1000 requests (circular buffer for bounded memory)
+   - Shows: method, path, status, response size, timestamp
+   - Useful for debugging specific requests
+
+**Implementation Notes:**
+- SVG-based charts (no JavaScript dependencies)
+- Thread-safe, non-blocking metrics collection
+- Circular buffer ensures bounded memory usage
+- Dashboard is a single static HTML page (server-rendered)
+
+**Example:**
+```bash
+# Start server with metrics on custom port
+radix serve --metrics-port 9000
+
+# Disable metrics entirely
+radix serve --no-metrics
 ```
 
-See `internal/metrics/` for implementation.
+**Why not Prometheus?**
+Prometheus is designed for production monitoring infrastructure. For local development,
+a simple visual dashboard is more useful - you can glance at it without setting up
+Prometheus, Grafana, etc. If users need Prometheus, they can scrape the JSON endpoint.
 
 ### Logging
 
@@ -1691,6 +1727,37 @@ func (s *Server) Start(ctx context.Context) error {
 
 ## Configuration Reference
 
+### Config File Discovery
+
+Radix searches for configuration files using upward directory traversal (like `.eslintrc`, `.prettierrc`, or `.git`):
+
+```
+Search order (first match wins):
+
+1. --config flag         (explicit path, highest priority)
+2. Current directory     ./radix.yml, ./radix.yaml, ./.radix.yml
+3. Parent directories    Walk up looking for radix.yml (stops at filesystem root or home dir)
+4. User home            ~/.radix.yml, ~/.config/radix/config.yml
+5. System               /etc/radix/radix.yml (Linux/macOS only)
+```
+
+**Why upward traversal?**
+- Run `radix serve` from any subdirectory and it finds the project's config
+- Monorepos can have per-package configs that override the root
+- Matches developer expectations from tools like ESLint, Prettier, Git
+
+**Example:**
+```
+~/projects/myapp/
+├── radix.yml              ← Found when running from any subdirectory
+├── frontend/
+│   ├── radix.yml          ← Overrides parent for frontend-specific settings
+│   └── src/
+│       └── (run radix serve here, finds frontend/radix.yml)
+└── backend/
+    └── (run radix serve here, finds root radix.yml)
+```
+
 ### Global Configuration
 
 ```yaml
@@ -1711,11 +1778,10 @@ global:
     client_auth: false
     min_version: "1.2"
 
-  # Metrics (shared)
+  # Metrics dashboard (shared)
   metrics:
     enabled: true
-    path: /_metrics
-    format: json  # json, prometheus
+    port: 8739  # Dedicated port for dashboard
 
   # Logging (shared)
   logging:
