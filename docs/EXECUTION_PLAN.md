@@ -216,6 +216,162 @@ Every task PR must include:
 
 ---
 
+## Agent Prompt Template
+
+Use this prompt to start or resume a task. Copy and customize the `{{placeholders}}`.
+
+---
+
+### Starting a new task
+
+```
+## Task
+
+Implement task **{{TASK_ID}}** from the Radix execution plan: **{{TASK_TITLE}}**
+
+## Context
+
+- Read `docs/EXECUTION_PLAN.md` for the full plan and task dependencies
+- Read `docs/COMMAND_DESIGN.md` for detailed design specs and expected behavior
+- Read `CLAUDE.md` for project conventions, code patterns, and development workflow
+- Read `IMPLEMENTATION_PLAN.md` for architecture context
+
+## Task description
+
+{{TASK_DESCRIPTION — copy the Description column from the execution plan table}}
+
+## Dependencies
+
+These tasks are already complete and their code is available:
+{{LIST_COMPLETED_DEPENDENCY_TASKS — e.g., "- 5.1.1 Base HTTP server (internal/server/server.go)"}}
+
+## Requirements
+
+1. Implement the feature in the appropriate `internal/` package
+2. Write comprehensive unit tests (table-driven, edge cases, race-safe)
+3. Follow existing code patterns and conventions from CLAUDE.md
+4. Run `make test && make lint` and fix any issues
+5. Commit with conventional commit format: `feat(scope): description`
+6. Push to the designated branch
+
+## Constraints
+
+- No new external dependencies without justification
+- Use standard library where possible
+- All exported functions must have doc comments
+- Thread safety required for shared state (use atomic, sync.Map, or mutexes)
+- >80% test coverage for new code
+```
+
+---
+
+### Resuming / continuing a task
+
+```
+## Resume
+
+Continue work on task **{{TASK_ID}}**: **{{TASK_TITLE}}**
+
+## Current state
+
+{{DESCRIBE_CURRENT_STATE — e.g.:
+- "The handler struct is implemented but tests are incomplete"
+- "PR feedback requested changes to X"
+- "Linting passes but coverage is at 72%, need more edge case tests"}}
+
+## What remains
+
+{{LIST_REMAINING_ITEMS — e.g.:
+- "Add tests for concurrent access"
+- "Fix linter warning about unused parameter"
+- "Update to match revised design in COMMAND_DESIGN.md section X"}}
+
+## References
+
+- Read `docs/EXECUTION_PLAN.md` for full plan context
+- Read `docs/COMMAND_DESIGN.md` for design specs
+- Read `CLAUDE.md` for conventions
+- Previous work is on branch: `{{BRANCH_NAME}}`
+```
+
+---
+
+### Starting a CLI command integration task (e.g., 5.2.9, 5.3.9, 7.1.4, 7.2.17)
+
+These tasks wire everything together and are always the last task for a command.
+
+```
+## Task
+
+Implement task **{{TASK_ID}}**: **{{COMMAND_NAME}} CLI command integration**
+
+## Context
+
+- Read `docs/EXECUTION_PLAN.md` for the full plan
+- Read `docs/COMMAND_DESIGN.md` — the "{{COMMAND_NAME}} Command" section has the
+  complete flag list, config YAML structure, and usage examples
+- Read `CLAUDE.md` for conventions (especially "Adding a New Command" workflow)
+- Study `internal/cli/version.go` and `internal/cli/validate.go` for the existing
+  command patterns
+
+## Completed dependencies
+
+All feature tasks for this command are complete:
+{{LIST_ALL_FEATURE_TASKS — e.g.:
+- "5.2.1 Static file handler (internal/server/static.go)"
+- "5.2.2 Directory listing"
+- "5.2.3 Index resolution & SPA mode"
+- "5.2.4 Compression middleware"
+- ...}}
+
+## Requirements
+
+1. Create `internal/cli/{{command}}.go` with the Cobra command
+2. Register all flags from COMMAND_DESIGN.md (basic, advanced, all categories)
+3. Register the command in `internal/cli/root.go` via `rootCmd.AddCommand()`
+4. In the `RunE` function:
+   - Load and validate config
+   - Build the handler by composing all feature implementations
+   - Chain middleware: recovery → logging → metrics → CORS → command-specific
+   - Start the base server with graceful shutdown
+   - Start the metrics dashboard (if enabled)
+   - Print startup banner (URL, features enabled, config source)
+5. Write tests: flag parsing, config binding, middleware chain order, startup output
+6. Run `make test && make lint` and ensure clean
+7. Commit and push
+```
+
+---
+
+### Starting multiple parallel tasks
+
+When launching agents for tasks that can run concurrently (see "Parallelization Opportunities" section):
+
+```
+## Parallel task batch
+
+Start the following independent tasks in parallel. Each should be on its own
+feature branch and result in its own PR.
+
+### Agent 1 — Task {{TASK_ID_A}}: {{TITLE_A}}
+{{TASK_DESCRIPTION_A}}
+
+### Agent 2 — Task {{TASK_ID_B}}: {{TITLE_B}}
+{{TASK_DESCRIPTION_B}}
+
+### Agent 3 — Task {{TASK_ID_C}}: {{TITLE_C}}
+{{TASK_DESCRIPTION_C}}
+
+## Shared context for all agents
+
+- Read `docs/EXECUTION_PLAN.md`, `docs/COMMAND_DESIGN.md`, `CLAUDE.md`
+- These tasks are independent — no code dependencies between them
+- Completed prerequisites available: {{LIST_SHARED_DEPENDENCIES}}
+- Each agent: implement, test, lint, commit, push
+```
+
+---
+
 ## Notes
 
 - Task numbers (e.g., 5.2.1) are stable identifiers — do not renumber when inserting tasks
