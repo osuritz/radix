@@ -22,6 +22,14 @@ var (
 	metricsEnabled bool
 	metricsPath    string
 	metricsFormat  string
+
+	// TLS flags
+	tlsEnabled    bool
+	tlsCert       string
+	tlsKey        string
+	tlsCA         string
+	tlsClientAuth bool
+	tlsMinVersion string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -74,6 +82,26 @@ Examples:
 			cfg.Metrics.Format = metricsFormat
 		}
 
+		// TLS flag overrides
+		if cmd.Flags().Changed("tls") {
+			cfg.TLS.Enabled = tlsEnabled
+		}
+		if cmd.Flags().Changed("cert") {
+			cfg.TLS.Cert = tlsCert
+		}
+		if cmd.Flags().Changed("key") {
+			cfg.TLS.Key = tlsKey
+		}
+		if cmd.Flags().Changed("ca") {
+			cfg.TLS.CA = tlsCA
+		}
+		if cmd.Flags().Changed("client-auth") {
+			cfg.TLS.ClientAuth = tlsClientAuth
+		}
+		if cmd.Flags().Changed("tls-min-version") {
+			cfg.TLS.MinVersion = tlsMinVersion
+		}
+
 		return nil
 	},
 }
@@ -95,6 +123,14 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&metricsEnabled, "metrics", true, "enable metrics endpoint")
 	rootCmd.PersistentFlags().StringVar(&metricsPath, "metrics-path", "/_metrics", "metrics endpoint path")
 	rootCmd.PersistentFlags().StringVar(&metricsFormat, "metrics-format", "json", "metrics output format (json, prometheus)")
+
+	// TLS flags
+	rootCmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "enable HTTPS/TLS")
+	rootCmd.PersistentFlags().StringVar(&tlsCert, "cert", "", "TLS certificate file path")
+	rootCmd.PersistentFlags().StringVar(&tlsKey, "key", "", "TLS private key file path")
+	rootCmd.PersistentFlags().StringVar(&tlsCA, "ca", "", "CA certificate for client verification")
+	rootCmd.PersistentFlags().BoolVar(&tlsClientAuth, "client-auth", false, "require client TLS certificates")
+	rootCmd.PersistentFlags().StringVar(&tlsMinVersion, "tls-min-version", "1.2", "minimum TLS version (1.2, 1.3)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
