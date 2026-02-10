@@ -99,6 +99,7 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(gencertCmd)
 }
 
 // GetConfig returns the loaded configuration
