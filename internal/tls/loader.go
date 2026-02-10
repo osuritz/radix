@@ -87,7 +87,7 @@ func NewServerTLSConfig(cfg ServerTLSOptions) (*cryptotls.Config, error) {
 		return nil, err
 	}
 
-	tlsConfig := &cryptotls.Config{
+	tlsConfig := &cryptotls.Config{ //#nosec G402 - MinVersion is user-configurable, minimum 1.2
 		Certificates: []cryptotls.Certificate{cert},
 		MinVersion:   minVersion,
 	}
@@ -117,7 +117,7 @@ func NewServerTLSConfig(cfg ServerTLSOptions) (*cryptotls.Config, error) {
 //
 // It optionally loads a client certificate for mTLS, a custom CA for server
 // verification, and supports InsecureSkipVerify for development use.
-func NewClientTLSConfig(cfg ClientTLSOptions) (*cryptotls.Config, error) {
+func NewClientTLSConfig(cfg *ClientTLSOptions) (*cryptotls.Config, error) {
 	minVersion, err := ParseMinVersion(cfg.MinVersion)
 	if err != nil {
 		return nil, err
@@ -192,7 +192,7 @@ func loadCACertPool(caFile string) (*x509.CertPool, error) {
 // validatePEMFile checks that a file exists, is readable, and contains valid
 // PEM data. If expectedType is non-empty, it verifies the PEM block type
 // matches.
-func validatePEMFile(path string, expectedType string) error {
+func validatePEMFile(path, expectedType string) error {
 	// #nosec G304 - file path is user-provided configuration
 	data, err := os.ReadFile(path)
 	if err != nil {

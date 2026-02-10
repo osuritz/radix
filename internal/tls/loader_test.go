@@ -478,7 +478,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -499,7 +499,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -521,7 +521,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -545,7 +545,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -568,7 +568,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		_, err := NewClientTLSConfig(cfg)
+		_, err := NewClientTLSConfig(&cfg)
 		if err == nil {
 			t.Fatal("expected error when cert is provided without key")
 		}
@@ -587,7 +587,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		_, err := NewClientTLSConfig(cfg)
+		_, err := NewClientTLSConfig(&cfg)
 		if err == nil {
 			t.Fatal("expected error when key is provided without cert")
 		}
@@ -601,7 +601,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -618,7 +618,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.3",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}
@@ -638,7 +638,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.0",
 		}
 
-		_, err := NewClientTLSConfig(cfg)
+		_, err := NewClientTLSConfig(&cfg)
 		if err == nil {
 			t.Fatal("expected error for invalid min version")
 		}
@@ -655,7 +655,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		_, err := NewClientTLSConfig(cfg)
+		_, err := NewClientTLSConfig(&cfg)
 		if err == nil {
 			t.Fatal("expected error for missing client cert file")
 		}
@@ -675,7 +675,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		_, err := NewClientTLSConfig(cfg)
+		_, err := NewClientTLSConfig(&cfg)
 		if err == nil {
 			t.Fatal("expected error for invalid CA file")
 		}
@@ -695,7 +695,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 			MinVersion: "1.2",
 		}
 
-		tlsCfg, err := NewClientTLSConfig(cfg)
+		tlsCfg, err := NewClientTLSConfig(&cfg)
 		if err != nil {
 			t.Fatalf("NewClientTLSConfig: %v", err)
 		}

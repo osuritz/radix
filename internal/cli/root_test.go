@@ -34,10 +34,10 @@ func TestTLSFlagsExistWithDefaults(t *testing.T) {
 	resetRootCmdFlags()
 
 	tests := []struct {
-		name         string
-		flagName     string
-		wantDefault  string
-		wantExist    bool
+		name        string
+		flagName    string
+		wantDefault string
+		wantExist   bool
 	}{
 		{"tls flag exists", "tls", "false", true},
 		{"cert flag exists", "cert", "", true},
