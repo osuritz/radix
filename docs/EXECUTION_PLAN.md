@@ -23,10 +23,10 @@ Tracks implementation tasks for each command. Each task is designed to be a sing
 
 | # | Task | PR | Status | Description |
 |---|------|----|--------|-------------|
-| 4.1.1 | TLS key generation core | | ⬜ | `internal/tls/generator.go` — RSA (2048/4096) and ECDSA (P-256/P-384/P-521) key pair generation. Unit tests for key types, sizes, and error cases. |
-| 4.1.2 | X.509 certificate creation | | ⬜ | CA and leaf certificate generation with SAN support (DNS names, IPs, wildcards). Serial number generation, validity periods, key usage extensions. Tests for all SAN types, CA vs leaf certs, expiry. |
-| 4.1.3 | PEM encoding & file output | | ⬜ | Write cert.pem, key.pem, ca.pem, ca-key.pem to output directory. PKCS#12 bundle generation (optional). File permission handling (0600 for keys). README.txt generation with trust-store instructions. Tests for file creation, overwrite protection, permissions. |
-| 4.1.4 | `gencert` CLI command | | ⬜ | `internal/cli/gencert.go` — Wire up Cobra command with all flags (`--host`, `--output`, `--days`, `--org`, `--key-size`, `--key-type`, `--ecdsa-curve`, `--ca`, `--ca-cert`, `--ca-key`, `--client`, `--pkcs12`, `--overwrite`). Register in root command. Config file integration. Tests for flag parsing, validation, end-to-end generation. |
+| 4.1.1 | TLS key generation core | #20 | ✅ | `internal/tls/generator.go` — RSA (2048/4096) and ECDSA (P-256/P-384/P-521) key pair generation. Unit tests for key types, sizes, and error cases. |
+| 4.1.2 | X.509 certificate creation | #20 | ✅ | CA and leaf certificate generation with SAN support (DNS names, IPs, wildcards). Serial number generation, validity periods, key usage extensions. Tests for all SAN types, CA vs leaf certs, expiry. |
+| 4.1.3 | PEM encoding & file output | #20 | ✅ | Write cert.pem, key.pem, ca.pem, ca-key.pem to output directory. PKCS#12 bundle generation (optional). File permission handling (0600 for keys). README.txt generation with trust-store instructions. Tests for file creation, overwrite protection, permissions. |
+| 4.1.4 | `gencert` CLI command | #20 | ✅ | `internal/cli/gencert.go` — Wire up Cobra command with all flags (`--host`, `--output`, `--days`, `--org`, `--key-size`, `--key-type`, `--ecdsa-curve`, `--ca`, `--ca-cert`, `--ca-key`, `--client`, `--pkcs12`, `--overwrite`). Register in root command. Config file integration. Tests for flag parsing, validation, end-to-end generation. |
 
 ### 4.2 TLS Configuration Loading
 

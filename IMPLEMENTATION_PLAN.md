@@ -765,14 +765,14 @@ mock:
   - [ ] Branch protection rules documentation
 
 ### Phase 4: TLS Infrastructure
-- [ ] **TLS Phase 1: Certificate Generation**
-  - [ ] Implement `internal/tls/generator.go` for self-signed cert generation
-  - [ ] Create `radix gencert` command
-  - [ ] Support RSA key generation (2048/4096 bit)
-  - [ ] Implement X.509 certificate with SAN support
-  - [ ] Generate CA certificate for trust chain
-  - [ ] Add tests for certificate generation
-  - [ ] Document certificate usage
+- [x] **TLS Phase 1: Certificate Generation** (PR #20)
+  - [x] Implement `internal/tls/generator.go` for self-signed cert generation
+  - [x] Create `radix gencert` command
+  - [x] Support RSA key generation (2048/4096 bit)
+  - [x] Implement X.509 certificate with SAN support
+  - [x] Generate CA certificate for trust chain
+  - [x] Add tests for certificate generation
+  - [x] Document certificate usage
 
 - [ ] **TLS Phase 2: Configuration & Loading**
   - [ ] Implement `internal/tls/loader.go` for cert loading
