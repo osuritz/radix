@@ -209,6 +209,7 @@ func WriteCertFiles(dir, certName, keyName string, cert *Certificate, overwrite 
 		}
 	}
 
+	// #nosec G306 - certificate files are not sensitive (public key material)
 	if err := os.WriteFile(certPath, cert.CertPEM, 0o644); err != nil {
 		return fmt.Errorf("writing certificate file: %w", err)
 	}
@@ -222,7 +223,7 @@ func WriteCertFiles(dir, certName, keyName string, cert *Certificate, overwrite 
 }
 
 // WriteReadme writes a README.txt with usage instructions to the output directory.
-func WriteReadme(dir string, hosts []string, overwrite bool) error {
+func WriteReadme(dir string, _ []string, overwrite bool) error {
 	readmePath := filepath.Join(dir, "README.txt")
 
 	if !overwrite {

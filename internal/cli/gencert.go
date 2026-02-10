@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,53 +122,9 @@ func runGencert(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("resolving output directory: %w", err)
 	}
 
-	var caCert *tls.Certificate
-	var generatedCA bool
-
-	if gencertCACert != "" && gencertCAKey != "" {
-		// Load existing CA
-		fmt.Fprintln(out, "Loading existing CA certificate...")
-
-		caCertPEM, err := os.ReadFile(gencertCACert)
-		if err != nil {
-			return fmt.Errorf("reading CA certificate: %w", err)
-		}
-		caKeyPEM, err := os.ReadFile(gencertCAKey)
-		if err != nil {
-			return fmt.Errorf("reading CA private key: %w", err)
-		}
-
-		caCert = &tls.Certificate{CertPEM: caCertPEM, KeyPEM: caKeyPEM}
-		fmt.Fprintf(out, "  CA certificate: %s\n", gencertCACert)
-		fmt.Fprintf(out, "  CA private key: %s\n", gencertCAKey)
-	} else if gencertCA {
-		// Generate new CA
-		fmt.Fprintln(out, "Generating CA certificate...")
-
-		caCfg := &tls.CertConfig{
-			Hosts:        hosts,
-			Days:         gencertDays,
-			Organization: gencertOrg,
-			KeyType:      keyType,
-			KeySize:      gencertKeySize,
-			ECDSACurve:   ecdsaCurve,
-			IsCA:         true,
-		}
-
-		caCert, err = tls.GenerateCA(caCfg)
-		if err != nil {
-			return fmt.Errorf("generating CA certificate: %w", err)
-		}
-
-		if err := tls.WriteCertFiles(outputDir, "ca.pem", "ca-key.pem", caCert, gencertOverwrite); err != nil {
-			return fmt.Errorf("writing CA certificate files: %w", err)
-		}
-
-		generatedCA = true
-		fmt.Fprintf(out, "  CA certificate: %s\n", filepath.Join(outputDir, "ca.pem"))
-		fmt.Fprintf(out, "  CA private key: %s\n", filepath.Join(outputDir, "ca-key.pem"))
-	} else {
-		return fmt.Errorf("either --ca must be true or --ca-cert and --ca-key must be provided")
+	caCert, generatedCA, err := resolveCA(out, certCfg, outputDir, keyType, ecdsaCurve, hosts)
+	if err != nil {
+		return err
 	}
 
 	// Parse the CA certificate and key for signing
@@ -246,4 +203,59 @@ func parseHosts(hosts string) []string {
 		}
 	}
 	return result
+}
+
+// resolveCA either loads an existing CA or generates a new one.
+func resolveCA(out io.Writer, certCfg *tls.CertConfig, outputDir string, keyType tls.KeyType, ecdsaCurve tls.ECDSACurve, hosts []string) (*tls.Certificate, bool, error) {
+	switch {
+	case gencertCACert != "" && gencertCAKey != "":
+		// Load existing CA
+		fmt.Fprintln(out, "Loading existing CA certificate...")
+
+		// #nosec G304 - CA cert path is user-provided via CLI flag
+		caCertPEM, err := os.ReadFile(gencertCACert)
+		if err != nil {
+			return nil, false, fmt.Errorf("reading CA certificate: %w", err)
+		}
+		// #nosec G304 - CA key path is user-provided via CLI flag
+		caKeyPEM, err := os.ReadFile(gencertCAKey)
+		if err != nil {
+			return nil, false, fmt.Errorf("reading CA private key: %w", err)
+		}
+
+		caCert := &tls.Certificate{CertPEM: caCertPEM, KeyPEM: caKeyPEM}
+		fmt.Fprintf(out, "  CA certificate: %s\n", gencertCACert)
+		fmt.Fprintf(out, "  CA private key: %s\n", gencertCAKey)
+		return caCert, false, nil
+
+	case gencertCA:
+		// Generate new CA
+		fmt.Fprintln(out, "Generating CA certificate...")
+
+		caCfg := &tls.CertConfig{
+			Hosts:        hosts,
+			Days:         certCfg.Days,
+			Organization: certCfg.Organization,
+			KeyType:      keyType,
+			KeySize:      certCfg.KeySize,
+			ECDSACurve:   ecdsaCurve,
+			IsCA:         true,
+		}
+
+		caCert, err := tls.GenerateCA(caCfg)
+		if err != nil {
+			return nil, false, fmt.Errorf("generating CA certificate: %w", err)
+		}
+
+		if writeErr := tls.WriteCertFiles(outputDir, "ca.pem", "ca-key.pem", caCert, gencertOverwrite); writeErr != nil {
+			return nil, false, fmt.Errorf("writing CA certificate files: %w", writeErr)
+		}
+
+		fmt.Fprintf(out, "  CA certificate: %s\n", filepath.Join(outputDir, "ca.pem"))
+		fmt.Fprintf(out, "  CA private key: %s\n", filepath.Join(outputDir, "ca-key.pem"))
+		return caCert, true, nil
+
+	default:
+		return nil, false, fmt.Errorf("either --ca must be true or --ca-cert and --ca-key must be provided")
+	}
 }

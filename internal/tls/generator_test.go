@@ -9,13 +9,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 // helperGenerateCA is a test helper that generates a CA certificate and parses it
 // for use in tests that need a signing CA. It fails the test on error.
-func helperGenerateCA(t *testing.T, cfg *CertConfig) (*Certificate, *x509.Certificate, interface{}) {
+func helperGenerateCA(t *testing.T, cfg *CertConfig) (*x509.Certificate, interface{}) {
 	t.Helper()
 	caCert, err := GenerateCA(cfg)
 	if err != nil {
@@ -29,7 +30,7 @@ func helperGenerateCA(t *testing.T, cfg *CertConfig) (*Certificate, *x509.Certif
 	if err != nil {
 		t.Fatalf("ParsePrivateKey(CA) unexpected error: %v", err)
 	}
-	return caCert, parsedCA, caKey
+	return parsedCA, caKey
 }
 
 func TestGenerateCA(t *testing.T) {
@@ -289,7 +290,7 @@ func TestGenerateServerCert(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA, caKey := helperGenerateCA(t, caCfg)
+	parsedCA, caKey := helperGenerateCA(t, caCfg)
 
 	tests := []struct {
 		name         string
@@ -480,7 +481,7 @@ func TestGenerateServerCert_Errors(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA, caKey := helperGenerateCA(t, caCfg)
+	parsedCA, caKey := helperGenerateCA(t, caCfg)
 
 	tests := []struct {
 		name string
@@ -529,7 +530,7 @@ func TestGenerateClientCert(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA, caKey := helperGenerateCA(t, caCfg)
+	parsedCA, caKey := helperGenerateCA(t, caCfg)
 
 	tests := []struct {
 		name    string
@@ -956,14 +957,17 @@ func TestWriteCertFiles(t *testing.T) {
 				t.Error("key file content does not match expected PEM")
 			}
 
-			// Verify key file has restricted permissions
-			keyInfo, err := os.Stat(keyPath)
-			if err != nil {
-				t.Fatalf("stat key file: %v", err)
-			}
-			keyPerm := keyInfo.Mode().Perm()
-			if keyPerm != 0o600 {
-				t.Errorf("key file permissions = %o, want 600", keyPerm)
+			// Verify key file has restricted permissions (skip on Windows where
+			// POSIX file permissions are not supported)
+			if runtime.GOOS != "windows" {
+				keyInfo, err := os.Stat(keyPath)
+				if err != nil {
+					t.Fatalf("stat key file: %v", err)
+				}
+				keyPerm := keyInfo.Mode().Perm()
+				if keyPerm != 0o600 {
+					t.Errorf("key file permissions = %o, want 600", keyPerm)
+				}
 			}
 		})
 	}
@@ -1105,7 +1109,7 @@ func TestCertificateChainValidation(t *testing.T) {
 				ECDSACurve:   tt.caCurve,
 				IsCA:         true,
 			}
-			_, parsedCA, caKey := helperGenerateCA(t, caCfg)
+			parsedCA, caKey := helperGenerateCA(t, caCfg)
 
 			// Generate server cert
 			srvCfg := &CertConfig{
@@ -1163,7 +1167,7 @@ func TestCertificateChainValidation_ClientCert(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA, caKey := helperGenerateCA(t, caCfg)
+	parsedCA, caKey := helperGenerateCA(t, caCfg)
 
 	clientCfg := &CertConfig{
 		Hosts:        []string{"client.local"},
@@ -1213,7 +1217,7 @@ func TestCertificateChainValidation_WrongCA(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA1, ca1Key := helperGenerateCA(t, ca1Cfg)
+	parsedCA1, ca1Key := helperGenerateCA(t, ca1Cfg)
 
 	ca2Cfg := &CertConfig{
 		Days:         365,
@@ -1222,7 +1226,7 @@ func TestCertificateChainValidation_WrongCA(t *testing.T) {
 		ECDSACurve:   CurveP256,
 		IsCA:         true,
 	}
-	_, parsedCA2, _ := helperGenerateCA(t, ca2Cfg)
+	parsedCA2, _ := helperGenerateCA(t, ca2Cfg)
 
 	// Sign server cert with CA1
 	srvCfg := &CertConfig{
