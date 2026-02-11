@@ -73,7 +73,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
 
 	// Load config through Viper to validate structure
-	cfg, err := config.Load(absPath)
+	loadedCfg, err := config.Load(absPath)
 	if err != nil {
 		return fmt.Errorf("✗ Schema validation failed: %w", err)
 	}
@@ -82,63 +82,63 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	// Validate file paths if TLS is enabled
 	warnings := []string{}
 
-	if cfg.TLS.Enabled {
-		if cfg.TLS.Cert == "" {
+	if loadedCfg.TLS.Enabled {
+		if loadedCfg.TLS.Cert == "" {
 			return fmt.Errorf("✗ TLS enabled but cert file not specified")
 		}
-		if cfg.TLS.Key == "" {
+		if loadedCfg.TLS.Key == "" {
 			return fmt.Errorf("✗ TLS enabled but key file not specified")
 		}
 
 		// Check cert file
-		if err := validatePath(cfg.TLS.Cert, "cert.pem"); err != nil {
+		if err := validatePath(loadedCfg.TLS.Cert, "cert.pem"); err != nil {
 			return fmt.Errorf("✗ Certificate file: %w", err)
 		}
 
 		// Check key file
-		if err := validatePath(cfg.TLS.Key, "key.pem"); err != nil {
+		if err := validatePath(loadedCfg.TLS.Key, "key.pem"); err != nil {
 			return fmt.Errorf("✗ Key file: %w", err)
 		}
 
 		// Check CA file if specified
-		if cfg.TLS.CA != "" {
-			if err := validatePath(cfg.TLS.CA, "ca.pem"); err != nil {
-				warnings = append(warnings, fmt.Sprintf("CA file not found: %s", cfg.TLS.CA))
+		if loadedCfg.TLS.CA != "" {
+			if err := validatePath(loadedCfg.TLS.CA, "ca.pem"); err != nil {
+				warnings = append(warnings, fmt.Sprintf("CA file not found: %s", loadedCfg.TLS.CA))
 			}
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), "✓ TLS certificates: OK")
 
 		// Check TLS version
-		if cfg.TLS.MinVersion != "1.2" && cfg.TLS.MinVersion != "1.3" {
-			return fmt.Errorf("✗ Invalid TLS min_version: %s (must be '1.2' or '1.3')", cfg.TLS.MinVersion)
+		if loadedCfg.TLS.MinVersion != "1.2" && loadedCfg.TLS.MinVersion != "1.3" {
+			return fmt.Errorf("✗ Invalid TLS min_version: %s (must be '1.2' or '1.3')", loadedCfg.TLS.MinVersion)
 		}
 
 		// Warn if using TLS 1.2
-		if cfg.TLS.MinVersion == "1.2" {
+		if loadedCfg.TLS.MinVersion == "1.2" {
 			warnings = append(warnings, "Consider setting tls.min_version to '1.3' for better security")
 		}
 	}
 
 	// Validate port range
-	if cfg.Port < 1 || cfg.Port > 65535 {
-		return fmt.Errorf("✗ Invalid port: %d (must be 1-65535)", cfg.Port)
+	if loadedCfg.Port < 1 || loadedCfg.Port > 65535 {
+		return fmt.Errorf("✗ Invalid port: %d (must be 1-65535)", loadedCfg.Port)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", cfg.Port)
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", loadedCfg.Port)
 
 	// Validate serve directory if specified
-	if cfg.Serve.Dir != "" && cfg.Serve.Dir != "." {
-		if info, err := os.Stat(cfg.Serve.Dir); err != nil {
-			warnings = append(warnings, fmt.Sprintf("Serve directory not found: %s", cfg.Serve.Dir))
+	if loadedCfg.Serve.Dir != "" && loadedCfg.Serve.Dir != "." {
+		if info, err := os.Stat(loadedCfg.Serve.Dir); err != nil {
+			warnings = append(warnings, fmt.Sprintf("Serve directory not found: %s", loadedCfg.Serve.Dir))
 		} else if !info.IsDir() {
-			warnings = append(warnings, fmt.Sprintf("Serve path is not a directory: %s", cfg.Serve.Dir))
+			warnings = append(warnings, fmt.Sprintf("Serve path is not a directory: %s", loadedCfg.Serve.Dir))
 		}
 	}
 
 	// Validate mock routes file if specified
-	if cfg.Mock.Routes != "" {
-		if err := validatePath(cfg.Mock.Routes, "routes.yml"); err != nil {
-			warnings = append(warnings, fmt.Sprintf("Mock routes file not found: %s", cfg.Mock.Routes))
+	if loadedCfg.Mock.Routes != "" {
+		if err := validatePath(loadedCfg.Mock.Routes, "routes.yml"); err != nil {
+			warnings = append(warnings, fmt.Sprintf("Mock routes file not found: %s", loadedCfg.Mock.Routes))
 		}
 	}
 
