@@ -784,15 +784,17 @@ mock:
   - [x] Create TLS configuration tests
 
 ### Phase 5: Core Commands (HTTP)
-- [ ] Implement `serve` command (HTTP)
-  - [ ] Basic static file serving
-  - [ ] Directory listing
-  - [ ] Compression support
-  - [ ] SPA mode
-  - [ ] CORS support
-  - [ ] Integrate metrics middleware
-  - [ ] Add serve-specific metrics (cache hits, file types, etc.)
-  - [ ] Tests for serve command
+- [x] Implement `serve` command (HTTP) (commit 3d6ada3)
+  - [x] Basic static file serving
+  - [x] Directory listing
+  - [x] Compression support (gzip)
+  - [x] SPA mode
+  - [x] CORS support
+  - [x] Integrate metrics middleware
+  - [x] Cache-Control header support
+  - [x] TLS/HTTPS integration
+  - [x] Graceful shutdown
+  - [x] Tests for serve command
 
 - [ ] Implement auth extensions infrastructure
   - [ ] Define `HeaderProvider` interface in `internal/server/middleware/auth.go`
@@ -1317,10 +1319,12 @@ radix mock --routes ./api-mocks.yml --fail-rate 10
    - Configure linters and code quality tools ✓
    - Implement semantic versioning ✓
    - Set up GoReleaser for automated releases ✓
-5. **Phase 4: TLS Infrastructure** ← Current
-   - gencert command implementation
-   - TLS configuration loading
-6. **Phase 5: Core Commands (HTTP)** (serve, proxy)
+5. **Phase 4: TLS Infrastructure** ✓ (completed)
+   - gencert command implementation ✓
+   - TLS configuration loading ✓
+6. **Phase 5: Core Commands (HTTP)** ← Current
+   - serve command ✓
+   - proxy command (next)
 7. **Phase 6: Core Commands (HTTPS)**
 8. **Phase 7: Advanced Commands (HTTP)** (echo, mock)
 9. **Phase 8: Advanced Commands (HTTPS)**

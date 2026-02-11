@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `radix gencert` command for TLS certificate generation
+- TLS config loader with global CLI flags (--tls, --cert, --key, --ca, --client-auth, --tls-min-version)
+- Auth extensions infrastructure with HeaderProvider interface
+- `radix serve` command for static file serving
+  - SPA mode (--spa) for single page applications
+  - CORS headers (--cors)
+  - Gzip compression (--gzip)
+  - Cache-Control header (--cache)
+  - TLS/HTTPS support
+  - Metrics integration
+  - Graceful shutdown
+  - Directory listing
+- CORS middleware for cross-origin request handling
+- Gzip compression middleware
+
 ## [0.1.0-alpha.1] - 2025-12-31
 
 ### Added
