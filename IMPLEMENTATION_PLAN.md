@@ -774,14 +774,14 @@ mock:
   - [x] Add tests for certificate generation
   - [x] Document certificate usage
 
-- [ ] **TLS Phase 2: Configuration & Loading**
-  - [ ] Implement `internal/tls/loader.go` for cert loading
-  - [ ] Implement `internal/tls/config.go` for TLS config helpers
-  - [ ] Add global TLS flags (--tls, --cert, --key, --ca, --client-auth)
-  - [ ] Support TLS version configuration (1.2, 1.3)
-  - [ ] Implement cipher suite configuration
-  - [ ] Add certificate validation
-  - [ ] Create TLS configuration tests
+- [x] **TLS Phase 2: Configuration & Loading** (PR #21)
+  - [x] Implement `internal/tls/loader.go` for cert loading
+  - [x] Implement `internal/tls/config.go` for TLS config helpers
+  - [x] Add global TLS flags (--tls, --cert, --key, --ca, --client-auth)
+  - [x] Support TLS version configuration (1.2, 1.3)
+  - [x] Implement cipher suite configuration
+  - [x] Add certificate validation
+  - [x] Create TLS configuration tests
 
 ### Phase 5: Core Commands (HTTP)
 - [ ] Implement `serve` command (HTTP)

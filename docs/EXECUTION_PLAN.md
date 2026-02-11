@@ -32,8 +32,8 @@ Tracks implementation tasks for each command. Each task is designed to be a sing
 
 | # | Task | PR | Status | Description |
 |---|------|----|--------|-------------|
-| 4.2.1 | TLS config loader | | ⬜ | `internal/tls/loader.go` — Load cert/key/CA files, build `*tls.Config`. Support TLS 1.2/1.3 minimum version. Cipher suite selection. Certificate validation on load. Tests for valid/invalid certs, version constraints, mTLS configs. |
-| 4.2.2 | TLS global flags | | ⬜ | Add persistent TLS flags to root command (`--tls`, `--cert`, `--key`, `--ca`, `--client-auth`, `--tls-min-version`). Wire into config system. Tests for flag-to-config binding. |
+| 4.2.1 | TLS config loader | #21 | ✅ | `internal/tls/loader.go` — Load cert/key/CA files, build `*tls.Config`. Support TLS 1.2/1.3 minimum version. Cipher suite selection. Certificate validation on load. Tests for valid/invalid certs, version constraints, mTLS configs. |
+| 4.2.2 | TLS global flags | #21 | ✅ | Add persistent TLS flags to root command (`--tls`, `--cert`, `--key`, `--ca`, `--client-auth`, `--tls-min-version`). Wire into config system. Tests for flag-to-config binding. |
 
 ---
 
