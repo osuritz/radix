@@ -796,31 +796,31 @@ mock:
   - [x] Graceful shutdown
   - [x] Tests for serve command
 
-- [ ] Implement auth extensions infrastructure
-  - [ ] Define `HeaderProvider` interface in `internal/server/middleware/auth.go`
-  - [ ] Implement `InjectHeaders` middleware using `HeaderProvider`
-  - [ ] Implement provider registry (`RegisterHeaderProvider`, `GetHeaderProvider`, `ResolveProvider`)
-  - [ ] Implement auto-detection: single registered provider used without config
-  - [ ] Implement `StaticProvider` for fixed headers from config (fallback)
-  - [ ] Add optional `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
+- [x] Implement auth extensions infrastructure
+  - [x] Define `HeaderProvider` interface in `internal/server/middleware/auth.go`
+  - [x] Implement `InjectHeaders` middleware using `HeaderProvider`
+  - [x] Implement provider registry (`RegisterHeaderProvider`, `GetHeaderProvider`, `ResolveProvider`)
+  - [x] Implement auto-detection: single registered provider used without config
+  - [x] Implement `StaticProvider` for fixed headers from config (fallback)
+  - [x] Add optional `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
   - [ ] Add auth provider metrics (injections, errors, latency)
-  - [ ] Tests for `HeaderProvider` interface compliance
-  - [ ] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
-  - [ ] Tests for `StaticProvider`
-  - [ ] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
-  - [ ] Document fork integration pattern in code comments
+  - [x] Tests for `HeaderProvider` interface compliance
+  - [x] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
+  - [x] Tests for `StaticProvider`
+  - [x] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
+  - [x] Document fork integration pattern in code comments
   - [ ] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
 
-- [ ] Implement `proxy` command (HTTP)
-  - [ ] Basic reverse proxy
-  - [ ] Header manipulation (static headers from config)
-  - [ ] Wire `InjectHeaders` middleware into proxy handler chain
-  - [ ] Path rewriting
-  - [ ] WebSocket support
-  - [ ] Integrate metrics middleware
+- [x] Implement `proxy` command (HTTP)
+  - [x] Basic reverse proxy
+  - [x] Header manipulation (static headers from config)
+  - [x] Wire `InjectHeaders` middleware into proxy handler chain
+  - [x] Path rewriting
+  - [x] WebSocket support (native via httputil.ReverseProxy)
+  - [x] Integrate metrics middleware
   - [ ] Add proxy-specific metrics (backend response times, errors, etc.)
-  - [ ] Tests for proxy command
-  - [ ] Integration test: proxy with `StaticProvider` auth headers
+  - [x] Tests for proxy command
+  - [x] Integration test: proxy with `StaticProvider` auth headers
 
 ### Phase 6: Core Commands (HTTPS)
 - [ ] **TLS Phase 3a: Serve Command TLS**
@@ -830,11 +830,11 @@ mock:
   - [ ] Implement HSTS headers
   - [ ] Integration tests with TLS
 
-- [ ] **TLS Phase 3b: Proxy Command TLS**
-  - [ ] Add HTTPS frontend to proxy
-  - [ ] Implement HTTPS backend support
-  - [ ] Add mutual TLS (mTLS) for backends
-  - [ ] Backend certificate verification
+- [x] **TLS Phase 3b: Proxy Command TLS**
+  - [x] Add HTTPS frontend to proxy
+  - [x] Implement HTTPS backend support
+  - [x] Add mutual TLS (mTLS) for backends
+  - [x] Backend certificate verification
   - [ ] Integration tests with TLS
 
 ### Phase 7: Advanced Commands (HTTP)

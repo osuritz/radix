@@ -93,9 +93,6 @@ func applyProxyFlags(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("header") {
 		cfg.Proxy.Headers = proxyHeaders
 	}
-	if cmd.Flags().Changed("cors") {
-		cfg.Proxy.CORS = proxyCORS
-	}
 	return nil
 }
 
@@ -162,12 +159,12 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	var finalHandler http.Handler = mux
 
 	// Auth header injection
-	provider := middleware.ResolveProvider(cfg.Proxy.Auth.Provider, cfg.Proxy.Headers)
+	provider := middleware.ResolveProvider("", cfg.Proxy.Headers)
 	if provider != nil {
 		finalHandler = middleware.InjectHeaders(provider)(finalHandler)
 	}
 
-	if cfg.Proxy.CORS {
+	if proxyCORS {
 		finalHandler = middleware.CORS()(finalHandler)
 	}
 

@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `radix gencert` command for TLS certificate generation
 - TLS config loader with global CLI flags (--tls, --cert, --key, --ca, --client-auth, --tls-min-version)
 - Auth extensions infrastructure with HeaderProvider interface
+  - `InjectHeaders` middleware for injecting headers into proxied requests
+  - `StaticProvider` for fixed headers from configuration
+  - Provider registry with auto-detection (single registered provider used automatically)
+  - `ResolveProvider` resolution: explicit config → auto-detect → static fallback
+- `radix proxy` command for reverse proxying to backend servers
+  - Target URL via positional arg or `--target` flag
+  - Path rewriting (`--rewrite from:to`)
+  - Path prefix stripping (`--strip-prefix`)
+  - Custom header injection (`--header "Key: Value"`)
+  - Configurable timeout (`--timeout`)
+  - Backend TLS support (--tls-skip-verify, backend CA/cert/key)
+  - CORS support (`--cors`)
+  - Auth header injection via HeaderProvider middleware
+  - TLS/HTTPS listener support
+  - Metrics integration
+  - Graceful shutdown
 - `radix serve` command for static file serving
   - SPA mode (--spa) for single page applications
   - CORS headers (--cors)
