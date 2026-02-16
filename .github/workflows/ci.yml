@@ -25,9 +25,9 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.9.0
           args: --timeout=5m
 
   security:
@@ -44,7 +44,7 @@ jobs:
           cache: true
 
       - name: Run gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.22.11
         with:
           args: '-no-fail -fmt sarif -out results.sarif ./...'
 
