@@ -72,6 +72,8 @@ type ProxyConfig struct {
 	Rewrite       string        `mapstructure:"rewrite"`
 	StripPrefix   string        `mapstructure:"strip_prefix"`
 	Headers       []string      `mapstructure:"headers"`
+	CORS          bool          `mapstructure:"cors"`
+	Auth          AuthConfig    `mapstructure:"auth"`
 }
 
 // EchoConfig represents configuration for the echo command
@@ -80,6 +82,12 @@ type EchoConfig struct {
 	Status  int           `mapstructure:"status"`
 	Body    string        `mapstructure:"body"`
 	Headers []string      `mapstructure:"headers"`
+}
+
+// AuthConfig represents authentication provider configuration for the proxy.
+type AuthConfig struct {
+	Provider string         `mapstructure:"provider"`
+	Config   map[string]any `mapstructure:"config"`
 }
 
 // MockConfig represents configuration for the mock command
