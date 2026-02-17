@@ -1,5 +1,5 @@
 // Package metrics provides HTTP request metrics collection and reporting.
-package metrics //nolint:revive // "metrics" shadows expvar/metrics but is the correct domain name here
+package metrics
 
 import (
 	"encoding/json"
