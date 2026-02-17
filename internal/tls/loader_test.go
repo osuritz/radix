@@ -1,3 +1,4 @@
+//revive:disable:var-naming // "tls" is intentional for an internal package
 package tls
 
 import (
