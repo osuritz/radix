@@ -90,6 +90,10 @@ linters:
           - gosec
         path: _test\.go
       - linters:
+          - revive
+        path: internal/metrics/
+        text: "var-naming.*package names"
+      - linters:
           - all
         path: vendor/
     paths:
