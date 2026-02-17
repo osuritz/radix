@@ -84,6 +84,9 @@ linters:
     generated: lax
     rules:
       - linters:
+          - revive
+        text: "package name .* has same name as predeclared identifier"
+      - linters:
           - errcheck
           - gocritic
           - gocyclo
