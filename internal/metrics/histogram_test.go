@@ -1,3 +1,4 @@
+//revive:disable:var-naming // "metrics" is intentional for an internal package
 package metrics
 
 import (

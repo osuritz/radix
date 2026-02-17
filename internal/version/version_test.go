@@ -1,3 +1,4 @@
+//revive:disable:var-naming // "version" is intentional for an internal package
 package version
 
 import (

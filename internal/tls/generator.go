@@ -1,3 +1,5 @@
+//revive:disable:var-naming // "tls" is intentional for an internal package
+
 // Package tls provides TLS certificate generation for local development.
 package tls
 
