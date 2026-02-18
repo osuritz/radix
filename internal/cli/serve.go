@@ -6,10 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
-	"time"
 
 	"github.com/osuritz/radix/internal/metrics"
 	"github.com/osuritz/radix/internal/server"
@@ -148,22 +145,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		finalHandler = middleware.Metrics(collector)(finalHandler)
 	}
 
-	// Build HTTP server
+	// Build server configuration
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           finalHandler,
-		ReadHeaderTimeout: 10 * time.Second,
+	srvCfg := &server.Config{
+		Addr:    addr,
+		Handler: finalHandler,
 	}
 
-	// Graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Start server
+	// Configure TLS if enabled
 	scheme := "http"
-	errCh := make(chan error, 1)
-
 	if cfg.TLS.Enabled {
 		scheme = "https"
 		tlsCfg, tlsErr := tls.NewServerTLSConfig(tls.ServerTLSOptions{
@@ -176,33 +166,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if tlsErr != nil {
 			return fmt.Errorf("TLS configuration error: %w", tlsErr)
 		}
-		srv.TLSConfig = tlsCfg
-
-		go func() {
-			errCh <- srv.ListenAndServeTLS("", "")
-		}()
-	} else {
-		go func() {
-			errCh <- srv.ListenAndServe()
-		}()
+		srvCfg.TLSConfig = tlsCfg
 	}
 
-	fmt.Printf("Serving %s on %s://%s\n", dir, scheme, addr)
+	srvCfg.Banner = fmt.Sprintf("Serving %s on %s://%s", dir, scheme, addr)
 
-	// Wait for shutdown signal or server error
-	select {
-	case <-ctx.Done():
-		fmt.Println("\nShutting down...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if shutdownErr := srv.Shutdown(shutdownCtx); shutdownErr != nil {
-			return fmt.Errorf("shutdown error: %w", shutdownErr)
-		}
-		return nil
-	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("server error: %w", err)
-		}
-		return nil
-	}
+	srv := server.NewServer(srvCfg)
+	return srv.Start(context.Background())
 }
