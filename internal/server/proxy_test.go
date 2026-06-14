@@ -237,3 +237,210 @@ func TestNewReverseProxy_HostHeader(t *testing.T) {
 		t.Errorf("expected Host header %q, got %q", targetURL.Host, receivedHost)
 	}
 }
+
+func TestNewReverseProxy_StreamingIncrementalFlush(t *testing.T) {
+	const chunkCount = 3
+	// chunkSent is signaled by the backend after it writes & flushes each chunk.
+	chunkSent := make(chan time.Time, chunkCount)
+	// release blocks the backend from writing the next chunk until the client
+	// has observed the previous one, proving incremental (not buffered) delivery.
+	release := make(chan struct{})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Errorf("backend ResponseWriter is not an http.Flusher")
+			return
+		}
+		for i := 0; i < chunkCount; i++ {
+			_, _ = w.Write([]byte("data: chunk\n\n"))
+			flusher.Flush()
+			chunkSent <- time.Now()
+			// Wait until the test allows the next chunk to be produced.
+			<-release
+		}
+	}))
+	defer backend.Close()
+
+	targetURL, _ := url.Parse(backend.URL)
+	proxy := NewReverseProxy(ProxyConfig{
+		Target:        targetURL,
+		Timeout:       5 * time.Second,
+		FlushInterval: -1, // flush immediately
+	})
+
+	// A real server is required: httptest.NewRecorder buffers and cannot
+	// observe streaming/flushing behavior.
+	front := httptest.NewServer(proxy)
+	defer front.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(front.URL + "/stream")
+	if err != nil {
+		t.Fatalf("client request failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", ct)
+	}
+
+	buf := make([]byte, 64)
+	for i := 0; i < chunkCount; i++ {
+		// The backend must have sent this chunk.
+		select {
+		case <-chunkSent:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for backend to send chunk %d", i)
+		}
+
+		// The client must be able to read it BEFORE we release the backend to
+		// produce later chunks. If responses were buffered until the handler
+		// returned, this read would block forever (the handler is stuck on
+		// <-release) and the test would time out.
+		readDone := make(chan error, 1)
+		go func() {
+			_, rerr := resp.Body.Read(buf)
+			readDone <- rerr
+		}()
+
+		select {
+		case rerr := <-readDone:
+			if rerr != nil {
+				t.Fatalf("reading chunk %d failed: %v", i, rerr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out reading chunk %d from client; response appears buffered, not streamed", i)
+		}
+
+		// Allow the backend to write the next chunk.
+		release <- struct{}{}
+	}
+}
+
+func TestNewReverseProxy_ForwardedHeaders(t *testing.T) {
+	var receivedHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	targetURL, _ := url.Parse(backend.URL)
+	proxy := NewReverseProxy(ProxyConfig{
+		Target:  targetURL,
+		Timeout: 5 * time.Second,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Host = "client.example.com"
+	req.RemoteAddr = "203.0.113.7:54321"
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	if got := receivedHeaders.Get("X-Forwarded-For"); got != "203.0.113.7" {
+		t.Errorf("expected X-Forwarded-For %q, got %q", "203.0.113.7", got)
+	}
+	if got := receivedHeaders.Get("X-Forwarded-Host"); got != "client.example.com" {
+		t.Errorf("expected X-Forwarded-Host %q, got %q", "client.example.com", got)
+	}
+	if got := receivedHeaders.Get("X-Forwarded-Proto"); got != "http" {
+		t.Errorf("expected X-Forwarded-Proto %q, got %q", "http", got)
+	}
+}
+
+func TestNewReverseProxy_ForwardedForAppended(t *testing.T) {
+	var receivedHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	targetURL, _ := url.Parse(backend.URL)
+	proxy := NewReverseProxy(ProxyConfig{
+		Target:  targetURL,
+		Timeout: 5 * time.Second,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "203.0.113.7:54321"
+	// Simulate an upstream proxy that already set X-Forwarded-For.
+	req.Header.Set("X-Forwarded-For", "198.51.100.1")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	want := "198.51.100.1, 203.0.113.7"
+	if got := receivedHeaders.Get("X-Forwarded-For"); got != want {
+		t.Errorf("expected appended X-Forwarded-For %q, got %q", want, got)
+	}
+}
+
+func TestIsStreamingContentType(t *testing.T) {
+	tests := []struct {
+		ct   string
+		want bool
+	}{
+		{"text/event-stream", true},
+		{"text/event-stream; charset=utf-8", true},
+		{"application/x-ndjson", true},
+		{"application/stream+json", true},
+		{"application/json", false},
+		{"text/html", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		if got := isStreamingContentType(tt.ct); got != tt.want {
+			t.Errorf("isStreamingContentType(%q) = %v, want %v", tt.ct, got, tt.want)
+		}
+	}
+}
+
+func TestNewReverseProxy_ModifyResponseStreamingHeaders(t *testing.T) {
+	// SSE response: should gain X-Accel-Buffering: no and Cache-Control: no-cache.
+	sseBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: hi\n\n"))
+	}))
+	defer sseBackend.Close()
+
+	sseURL, _ := url.Parse(sseBackend.URL)
+	sseProxy := NewReverseProxy(ProxyConfig{Target: sseURL, Timeout: 5 * time.Second})
+
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	rec := httptest.NewRecorder()
+	sseProxy.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Accel-Buffering"); got != "no" {
+		t.Errorf("expected X-Accel-Buffering %q for SSE, got %q", "no", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("expected Cache-Control %q for SSE, got %q", "no-cache", got)
+	}
+
+	// Normal JSON response: should NOT gain the streaming headers.
+	jsonBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer jsonBackend.Close()
+
+	jsonURL, _ := url.Parse(jsonBackend.URL)
+	jsonProxy := NewReverseProxy(ProxyConfig{Target: jsonURL, Timeout: 5 * time.Second})
+
+	req2 := httptest.NewRequest(http.MethodGet, "/data", nil)
+	rec2 := httptest.NewRecorder()
+	jsonProxy.ServeHTTP(rec2, req2)
+
+	if got := rec2.Header().Get("X-Accel-Buffering"); got != "" {
+		t.Errorf("expected no X-Accel-Buffering for JSON, got %q", got)
+	}
+	if got := rec2.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("expected no Cache-Control override for JSON, got %q", got)
+	}
+}
