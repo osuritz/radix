@@ -98,6 +98,17 @@ func NormalizePrefix(prefix string) string {
 	return strings.TrimRight(prefix, "/")
 }
 
+// WithLatencyAndFailures wraps next with the global latency (fixed + jitter) and
+// random-failure behavior described by cfg, exactly as NewMockHandler applies it
+// to the built-ins. It is exported so the routed mock handler can share the same
+// global chaos behavior. FailStatus defaults to 500 when zero.
+func WithLatencyAndFailures(next http.Handler, cfg MockConfig) http.Handler {
+	if cfg.FailStatus == 0 {
+		cfg.FailStatus = http.StatusInternalServerError
+	}
+	return withLatencyAndFailures(next, cfg)
+}
+
 // withLatencyAndFailures wraps next so that every request first incurs the
 // configured latency (fixed + jitter, context-aware) and may be short-circuited
 // with a random failure response based on cfg.FailRate.

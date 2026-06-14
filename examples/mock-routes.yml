@@ -1,0 +1,111 @@
+# Example custom routes for `radix mock`.
+#
+# Run with:
+#   radix mock examples/mock-routes.yml
+#   radix mock --routes examples/mock-routes.yml --watch   # hot-reload on save
+#
+# Custom routes take precedence over the built-in httpbin-style endpoints.
+# Templates use idiomatic Go text/template syntax: dot access for request data
+# ({{.params.id}}, {{.query.q}}, {{.body.field}}, {{.method}}, {{.path}}) and
+# function calls for generators ({{uuid}}, {{now}}, {{random 1 100}}, etc.).
+# Headers whose names contain "-" need the index function, e.g.
+# {{index .headers "Content-Type"}}.
+
+settings:
+  # Global latency/chaos (CLI flags override these). Durations accept Go
+  # duration strings ("200ms", "1s") or a bare number of seconds.
+  latency: 0
+  latency_jitter: 0
+  fail_rate: 0
+  fail_status: 500
+  cors: false
+
+  # What to do for requests that match neither a custom route nor a built-in
+  # endpoint: "404" (default) or "proxy" (forward to proxy_target).
+  fallback:
+    type: "404"
+    proxy_target: ""
+
+routes:
+  # Exact path + exact method, inline templated body.
+  - path: /api/health
+    method: GET
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body: '{"status":"ok"}'
+
+  # Path parameters (:name) exposed via .params.
+  - path: /api/users/:id
+    method: GET
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "id": "{{.params.id}}",
+          "name": "User {{.params.id}}",
+          "email": "user{{.params.id}}@example.com"
+        }
+
+  # POST with request body + generator functions.
+  - path: /api/users
+    method: POST
+    response:
+      status: 201
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "id": "{{uuid}}",
+          "name": "{{.body.name}}",
+          "email": "{{.body.email}}",
+          "created_at": "{{now}}"
+        }
+
+  # Response body read from a file (path relative to this routes file's
+  # directory). The file contents are templated too.
+  - path: /api/products
+    method: GET
+    response:
+      headers:
+        Content-Type: application/json
+      file: ./mocks/products.json
+
+  # Multiple methods via `methods:`; .method/.path are available in templates.
+  - path: /api/resource
+    methods: [GET, POST, PUT, DELETE]
+    response:
+      status: 200
+      body: '{"method":"{{.method}}","path":"{{.path}}"}'
+
+  # Query parameter access.
+  - path: /api/search
+    method: GET
+    response:
+      status: 200
+      body: '{"query":"{{.query.q}}","results":[]}'
+
+  # Regex path matching (regex: prefix).
+  - path: "regex:^/api/v[0-9]+/users$"
+    method: GET
+    response:
+      status: 200
+      body: '{"users":[]}'
+
+  # Trailing /* glob (prefix) match.
+  - path: /assets/*
+    response:
+      status: 200
+      body: 'asset for {{.path}}'
+
+  # Per-route delay (fixed + jitter).
+  - path: /api/slow
+    method: GET
+    delay: 2s
+    delay_jitter: 500ms
+    response:
+      status: 200
+      body: '{"message":"Finally!"}'

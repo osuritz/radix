@@ -2,6 +2,8 @@ package cli
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,12 +26,61 @@ func TestMockCmd_Registered(t *testing.T) {
 func TestMockCmd_Flags(t *testing.T) {
 	flags := []string{
 		"latency", "latency-jitter", "fail-rate", "fail-status",
-		"cors", "builtin", "prefix",
+		"cors", "builtin", "prefix", "routes", "watch",
 	}
 	for _, name := range flags {
 		if mockCmd.Flags().Lookup(name) == nil {
 			t.Errorf("flag %q not registered on mock command", name)
 		}
+	}
+}
+
+func TestMockCmd_RoutesShorthands(t *testing.T) {
+	if f := mockCmd.Flags().ShorthandLookup("r"); f == nil || f.Name != "routes" {
+		t.Errorf("expected -r shorthand for --routes")
+	}
+	if f := mockCmd.Flags().ShorthandLookup("w"); f == nil || f.Name != "watch" {
+		t.Errorf("expected -w shorthand for --watch")
+	}
+}
+
+func TestMockCmd_MissingRoutesFileRejected(t *testing.T) {
+	oldCfg := cfg
+	defer func() { cfg = oldCfg }()
+
+	cfg = newMockCfg(config.MockConfig{
+		FailStatus: 500,
+		Builtin:    true,
+		Routes:     filepath.Join(t.TempDir(), "nope.yml"),
+	})
+
+	err := runMock(mockCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for missing routes file, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to load routes file") {
+		t.Errorf("error = %v, want load-routes failure", err)
+	}
+}
+
+func TestMockCmd_InvalidRoutesFileRejected(t *testing.T) {
+	oldCfg := cfg
+	defer func() { cfg = oldCfg }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routes.yml")
+	if err := os.WriteFile(path, []byte("settings:\n  fallback:\n    type: proxy\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg = newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true, Routes: path})
+
+	err := runMock(mockCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid routes file, got nil")
+	}
+	if !strings.Contains(err.Error(), "proxy_target is required") {
+		t.Errorf("error = %v, want proxy_target requirement", err)
 	}
 }
 

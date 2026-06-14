@@ -168,12 +168,65 @@ radix mock --latency 200ms --latency-jitter 100ms
 radix mock --fail-rate 10 --fail-status 503
 ```
 
+### Custom routes (YAML)
+
+Provide a YAML routes file to define custom routes that take precedence over the
+built-ins. Pass it positionally (`radix mock <file>`) or via `--routes`/`-r`,
+and add `--watch`/`-w` to hot-reload on save:
+
+```bash
+# Serve custom routes (positional or --routes)
+radix mock examples/mock-routes.yml
+radix mock --routes examples/mock-routes.yml --watch
+```
+
+```yaml
+# routes.yml (see examples/mock-routes.yml for the full schema)
+settings:
+  fallback:
+    type: "404"            # "404" (default) or "proxy" (forward to proxy_target)
+routes:
+  - path: /api/health      # exact path
+    method: GET
+    response:
+      status: 200
+      headers: { Content-Type: application/json }
+      body: '{"status":"ok"}'
+  - path: /api/users/:id    # :param path params -> {{.params.id}}
+    method: GET
+    response: { status: 200, body: '{"id":"{{.params.id}}"}' }
+  - path: "regex:^/api/v[0-9]+/x$"   # regex: prefix
+    response: { status: 200, body: "ok" }
+  - path: /assets/*         # trailing /* glob (prefix) match
+    response: { status: 200, body: "asset" }
+  - path: /api/products
+    method: GET
+    response:
+      file: ./mocks/products.json     # body read from file (relative to routes file), templated
+```
+
+**Matching priority (first match wins):** exact+method → exact+any-method →
+`:param` → `regex:` → `/*` glob → built-in endpoint → fallback (`404`/`proxy`).
+
+**Templating** uses idiomatic Go `text/template` syntax. Request data is
+dot-accessible: `{{.method}}`, `{{.path}}`, `{{.params.id}}`, `{{.query.q}}`,
+`{{.headers.Authorization}}`, `{{.body.field}}` (parsed JSON). Header names
+containing `-` need `index`, e.g. `{{index .headers "Content-Type"}}`.
+Generator functions: `{{uuid}}`, `{{now}}`, `{{timestamp}}`,
+`{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`, `{{base64 "s"}}`.
+A malformed template or render error yields a `500` (the server stays up).
+
+> Not yet supported (ignored gracefully if present): `conditions`, stateful
+> `sequence`, weighted `random`, `websocket`, and `sse`.
+
 ### All mock flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--builtin` | `true` | Register the built-in httpbin-style endpoints |
 | `--prefix` | | Mount built-ins under a path prefix (e.g. `/_test` → `/_test/get`) |
+| `--routes`, `-r` | | YAML routes file defining custom routes (also positional) |
+| `--watch`, `-w` | `false` | Reload the routes file on change (hot-reload) |
 | `--latency` | `0` | Fixed artificial latency (e.g. `200ms`, `1s`) |
 | `--latency-jitter` | `0` | Random jitter added to latency |
 | `--fail-rate` | `0` | Random failure rate, percentage 0-100 |
@@ -182,7 +235,7 @@ radix mock --fail-rate 10 --fail-status 503
 | `--port` | `8080` | Port to listen on |
 | `--tls` | `false` | Serve the mock over HTTPS |
 
-> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Custom YAML routes, templating, and hot-reload are planned for a later release.
+> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags.
 
 ## Development
 
