@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -167,6 +168,12 @@ func ValidateServeTLS(cfg *Config) error {
 	return nil
 }
 
+// HealthzPath is the path the admin server's liveness endpoint is always served
+// at. It is reserved: the configurable metrics path must not collide with it, or
+// the admin mux would panic on a duplicate pattern registration at startup. Both
+// config validation and the admin server reference this const so they agree.
+const HealthzPath = "/healthz"
+
 // ValidateMetrics checks the metrics/admin-server options. It is shared between
 // each server command's runtime checks and the offline `radix validate` path so
 // that a misconfigured file is rejected before it ever reaches the server (with
@@ -177,6 +184,8 @@ func ValidateServeTLS(cfg *Config) error {
 //   - metrics.port must be in the valid TCP range 1..65535
 //   - metrics.port must differ from the app port (they would otherwise collide,
 //     since both bind a TCP port on the same machine)
+//   - metrics.path must be non-empty, start with "/", and not equal the reserved
+//     HealthzPath (otherwise the admin mux panics on a duplicate/invalid pattern)
 func ValidateMetrics(cfg *Config) error {
 	if !cfg.Metrics.Enabled {
 		return nil
@@ -186,6 +195,15 @@ func ValidateMetrics(cfg *Config) error {
 	}
 	if cfg.Metrics.Port == cfg.Port {
 		return fmt.Errorf("metrics.port (%d) must differ from the app port (%d)", cfg.Metrics.Port, cfg.Port)
+	}
+	if cfg.Metrics.Path == "" {
+		return fmt.Errorf("metrics.path must not be empty (e.g. %q)", "/_metrics")
+	}
+	if !strings.HasPrefix(cfg.Metrics.Path, "/") {
+		return fmt.Errorf("metrics.path (%q) must start with %q", cfg.Metrics.Path, "/")
+	}
+	if cfg.Metrics.Path == HealthzPath {
+		return fmt.Errorf("metrics.path (%q) must not equal the reserved %q liveness path", cfg.Metrics.Path, HealthzPath)
 	}
 	return nil
 }

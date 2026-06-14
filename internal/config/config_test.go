@@ -15,7 +15,12 @@ func TestValidateMetrics(t *testing.T) {
 	}{
 		{
 			name:    "valid distinct ports",
-			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090}},
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090, Path: "/_metrics"}},
+			wantErr: "",
+		},
+		{
+			name:    "valid custom path",
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090, Path: "/stats"}},
 			wantErr: "",
 		},
 		{
@@ -29,24 +34,44 @@ func TestValidateMetrics(t *testing.T) {
 			wantErr: "",
 		},
 		{
+			name:    "disabled ignores empty path",
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: false, Path: ""}},
+			wantErr: "",
+		},
+		{
 			name:    "port collision with app port",
-			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 8080}},
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 8080, Path: "/_metrics"}},
 			wantErr: "must differ from the app port",
 		},
 		{
 			name:    "port too low",
-			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 0}},
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 0, Path: "/_metrics"}},
 			wantErr: "between 1 and 65535",
 		},
 		{
 			name:    "port too high",
-			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 70000}},
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 70000, Path: "/_metrics"}},
 			wantErr: "between 1 and 65535",
 		},
 		{
 			name:    "port negative",
-			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: -1}},
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: -1, Path: "/_metrics"}},
 			wantErr: "between 1 and 65535",
+		},
+		{
+			name:    "empty path rejected",
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090, Path: ""}},
+			wantErr: "metrics.path must not be empty",
+		},
+		{
+			name:    "relative path rejected",
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090, Path: "metrics"}},
+			wantErr: "must start with",
+		},
+		{
+			name:    "path collides with healthz",
+			cfg:     &Config{Port: 8080, Metrics: MetricsConfig{Enabled: true, Port: 9090, Path: HealthzPath}},
+			wantErr: "reserved",
 		},
 	}
 

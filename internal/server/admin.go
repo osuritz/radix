@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/osuritz/radix/internal/config"
 	"github.com/osuritz/radix/internal/metrics"
 )
 
@@ -94,9 +96,20 @@ func NewAdminServer(cfg *AdminConfig) (*AdminServer, error) {
 
 	mux := http.NewServeMux()
 	if cfg.Collector != nil {
+		// Guard against a metrics path that would make mux.Handle panic
+		// (empty/relative pattern) or collide with the reserved /healthz route
+		// (duplicate pattern). config.ValidateMetrics rejects these up front, but a
+		// programming error must never crash the server, so fail loud here too —
+		// and before binding any listener, so there is nothing to leak.
+		if cfg.MetricsPath == "" || !strings.HasPrefix(cfg.MetricsPath, "/") {
+			return nil, fmt.Errorf("invalid admin metrics path %q: must be non-empty and start with %q", cfg.MetricsPath, "/")
+		}
+		if cfg.MetricsPath == config.HealthzPath {
+			return nil, fmt.Errorf("admin metrics path %q collides with the reserved %q liveness path", cfg.MetricsPath, config.HealthzPath)
+		}
 		mux.Handle(cfg.MetricsPath, cfg.Collector.Handler(cfg.MetricsFormat))
 	}
-	mux.HandleFunc("/healthz", healthzHandler(startTime, cfg.Version))
+	mux.HandleFunc(config.HealthzPath, healthzHandler(startTime, cfg.Version))
 
 	addr := net.JoinHostPort(AdminLoopbackHost, strconv.Itoa(cfg.Port))
 

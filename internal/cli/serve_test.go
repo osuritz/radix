@@ -13,10 +13,29 @@ import (
 	"github.com/osuritz/radix/internal/server"
 )
 
+// boundListener binds an ephemeral TCP listener on 127.0.0.1:0 and returns it
+// together with its resolved address. The listener is registered for cleanup.
+// Passing this listener into server.Config.Listener lets a test learn the real
+// bound address (via Server.Addr()) without a check-then-bind race: the port is
+// held by the listener for the lifetime of the test, never closed-then-rebound.
+func boundListener(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to bind ephemeral listener: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln, ln.Addr().String()
+}
+
 // freePort returns an ephemeral TCP port on 127.0.0.1 that is free at the
 // moment of the call. The listener is closed before returning, so there is an
 // inherent (small) race window; callers should treat the port as "very likely
 // free" and tolerate bind failures only where explicitly testing for them.
+//
+// Prefer boundListener for the main/auxiliary server lifecycle tests; freePort
+// remains only for cases that deliberately need a (likely) free *number*, such
+// as asserting a port-collision error.
 func freePort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -44,27 +63,27 @@ func waitForServer(addr string, timeout time.Duration) bool {
 }
 
 func TestRunServers_RedirectsPlainHTTP(t *testing.T) {
-	mainPort := freePort(t)
-	redirectPort := freePort(t)
+	mainLn, _ := boundListener(t)
+	mainPort := mainLn.Addr().(*net.TCPAddr).Port
+	redirectLn, redirectAddr := boundListener(t)
 
 	mainSrv := server.NewServer(&server.Config{
-		Addr: net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", mainPort)),
+		Listener: mainLn,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
 		Output: io.Discard,
 	})
 	redirectSrv := server.NewServer(&server.Config{
-		Addr:    net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", redirectPort)),
-		Handler: server.RedirectToHTTPS(mainPort),
-		Output:  io.Discard,
+		Listener: redirectLn,
+		Handler:  server.RedirectToHTTPS(mainPort),
+		Output:   io.Discard,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runServers(ctx, mainSrv, nil, redirectSrv) }()
 
-	redirectAddr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", redirectPort))
 	if !waitForServer(redirectAddr, 5*time.Second) {
 		cancel()
 		<-done
@@ -119,28 +138,31 @@ func TestRunServers_RedirectsPlainHTTP(t *testing.T) {
 	}
 }
 
-func TestRunServers_RedirectBindFailureTearsDownMain(t *testing.T) {
-	mainPort := freePort(t)
+func TestRunServers_RedirectFailureTearsDownMain(t *testing.T) {
+	mainLn, _ := boundListener(t)
+	mainPort := mainLn.Addr().(*net.TCPAddr).Port
 
-	// Occupy a port so the redirect server's bind fails.
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	// Force the auxiliary (redirect) server's Serve to fail immediately by handing
+	// it an already-closed listener: http.Server.Serve returns an error at once.
+	// This is the listener-based analogue of a bind failure and avoids the old
+	// check-then-bind race (occupying a port then hoping it stays occupied).
+	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("failed to occupy port: %v", err)
+		t.Fatalf("failed to bind dead listener: %v", err)
 	}
-	defer func() { _ = occupied.Close() }()
-	redirectPort := occupied.Addr().(*net.TCPAddr).Port
+	_ = deadLn.Close()
 
 	mainSrv := server.NewServer(&server.Config{
-		Addr: net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", mainPort)),
+		Listener: mainLn,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
 		Output: io.Discard,
 	})
 	redirectSrv := server.NewServer(&server.Config{
-		Addr:    net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", redirectPort)),
-		Handler: server.RedirectToHTTPS(mainPort),
-		Output:  io.Discard,
+		Listener: deadLn,
+		Handler:  server.RedirectToHTTPS(mainPort),
+		Output:   io.Discard,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -152,10 +174,10 @@ func TestRunServers_RedirectBindFailureTearsDownMain(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil {
-			t.Fatal("expected error from redirect bind failure, got nil")
+			t.Fatal("expected error from redirect serve failure, got nil")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("runServers did not return after redirect bind failure (main not torn down)")
+		t.Fatal("runServers did not return after redirect serve failure (main not torn down)")
 	}
 }
 

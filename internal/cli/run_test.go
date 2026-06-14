@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -24,7 +23,11 @@ func withCfg(t *testing.T, c *config.Config) {
 }
 
 func TestRunServers_AdminExposesMetricsAndHealthz(t *testing.T) {
-	appPort := freePort(t)
+	// The app server binds an ephemeral listener up front and reads its resolved
+	// address back, avoiding a check-then-bind race. The admin port is bound
+	// eagerly by buildAdminServer, so it still needs a (likely) free number.
+	appLn, appAddr := boundListener(t)
+	appPort := appLn.Addr().(*net.TCPAddr).Port
 	adminPort := freePort(t)
 
 	withCfg(t, &config.Config{
@@ -50,9 +53,9 @@ func TestRunServers_AdminExposesMetricsAndHealthz(t *testing.T) {
 	appHandler := middleware.Metrics(collector)(appMux)
 
 	mainSrv := server.NewServer(&server.Config{
-		Addr:    net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", appPort)),
-		Handler: appHandler,
-		Output:  io.Discard,
+		Listener: appLn,
+		Handler:  appHandler,
+		Output:   io.Discard,
 	})
 
 	admin, err := buildAdminServer("test", collector)
@@ -67,7 +70,6 @@ func TestRunServers_AdminExposesMetricsAndHealthz(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runServers(ctx, mainSrv, admin) }()
 
-	appAddr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", appPort))
 	adminAddr := admin.Addr()
 	if !waitForServer(appAddr, 5*time.Second) || !waitForServer(adminAddr, 5*time.Second) {
 		cancel()
@@ -132,16 +134,88 @@ func TestRunServers_AdminExposesMetricsAndHealthz(t *testing.T) {
 	}
 }
 
-func TestRunServers_MainBindFailureReleasesAdmin(t *testing.T) {
+func TestRunServers_CancelStopsMainAdminAndAux(t *testing.T) {
+	// Verify a single context cancel (the path a SIGINT takes once the main
+	// server's signal handler fires) tears down the main server, the admin
+	// server, AND an auxiliary server together, releasing every listener.
+	appLn, appAddr := boundListener(t)
+	auxLn, auxAddr := boundListener(t)
 	adminPort := freePort(t)
 
-	// Occupy a port and point the main server at it so its bind fails.
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	withCfg(t, &config.Config{
+		Port: appLn.Addr().(*net.TCPAddr).Port,
+		Host: "127.0.0.1",
+		Metrics: config.MetricsConfig{
+			Enabled: true,
+			Path:    "/_metrics",
+			Format:  "json",
+			Port:    adminPort,
+		},
+	})
+
+	collector := metrics.NewCollector("test", "1.0.0")
+
+	mainSrv := server.NewServer(&server.Config{
+		Listener: appLn,
+		Handler:  http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+		Output:   io.Discard,
+	})
+	auxSrv := server.NewServer(&server.Config{
+		Listener: auxLn,
+		Handler:  http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+		Output:   io.Discard,
+	})
+	admin, err := buildAdminServer("test", collector)
 	if err != nil {
-		t.Fatalf("occupy port: %v", err)
+		t.Fatalf("buildAdminServer: %v", err)
 	}
-	defer func() { _ = occupied.Close() }()
-	appPort := occupied.Addr().(*net.TCPAddr).Port
+	adminAddr := admin.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServers(ctx, mainSrv, admin, auxSrv) }()
+
+	// All three listeners reachable.
+	for _, addr := range []string{appAddr, auxAddr, adminAddr} {
+		if !waitForServer(addr, 5*time.Second) {
+			cancel()
+			<-done
+			t.Fatalf("server %s did not become ready", addr)
+		}
+	}
+
+	// A single cancel must stop them all and return without error.
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("runServers returned error on clean shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServers did not return after context cancel")
+	}
+
+	// Every listener released.
+	for _, addr := range []string{appAddr, auxAddr, adminAddr} {
+		if waitForServer(addr, 200*time.Millisecond) {
+			t.Errorf("listener %s still reachable after shutdown (leak)", addr)
+		}
+	}
+}
+
+func TestRunServers_MainServeFailureReleasesAdmin(t *testing.T) {
+	adminPort := freePort(t)
+
+	// Force the main server's Serve to fail immediately with an already-closed
+	// listener (the listener-based analogue of a bind failure, with no
+	// check-then-bind race). appPort just needs a distinct number for the metrics
+	// collision check; nothing binds it.
+	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bind dead listener: %v", err)
+	}
+	appPort := deadLn.Addr().(*net.TCPAddr).Port
+	_ = deadLn.Close()
 
 	withCfg(t, &config.Config{
 		Port: appPort,
@@ -162,9 +236,9 @@ func TestRunServers_MainBindFailureReleasesAdmin(t *testing.T) {
 	adminAddr := admin.Addr()
 
 	mainSrv := server.NewServer(&server.Config{
-		Addr:    net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", appPort)),
-		Handler: http.NotFoundHandler(),
-		Output:  io.Discard,
+		Listener: deadLn,
+		Handler:  http.NotFoundHandler(),
+		Output:   io.Discard,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -172,12 +246,12 @@ func TestRunServers_MainBindFailureReleasesAdmin(t *testing.T) {
 
 	err = runServers(ctx, mainSrv, admin)
 	if err == nil {
-		t.Fatal("expected error from main bind failure, got nil")
+		t.Fatal("expected error from main serve failure, got nil")
 	}
 
 	// The eagerly-bound admin listener must have been released, not leaked.
 	if waitForServer(adminAddr, 500*time.Millisecond) {
-		t.Error("admin listener leaked after main server bind failure")
+		t.Error("admin listener leaked after main server serve failure")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/osuritz/radix/internal/config"
 	"github.com/osuritz/radix/internal/metrics"
 )
 
@@ -212,6 +213,44 @@ func TestAdminServer_CustomMetricsPath(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestNewAdminServer_RejectsBadMetricsPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "empty path", path: "", wantErr: "invalid admin metrics path"},
+		{name: "relative path", path: "metrics", wantErr: "must be non-empty and start with"},
+		{name: "collides with healthz", path: config.HealthzPath, wantErr: "reserved"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			admin, err := NewAdminServer(&AdminConfig{
+				Port:          0,
+				Collector:     metrics.NewCollector("test", "1.0.0"),
+				MetricsPath:   tt.path,
+				MetricsFormat: "json",
+				Output:        io.Discard,
+			})
+			if err == nil {
+				_ = admin.Shutdown()
+				t.Fatalf("expected error for path %q, got nil", tt.path)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+			if admin != nil {
+				t.Error("expected nil admin server on invalid path")
+				_ = admin.Shutdown()
+			}
+		})
 	}
 }
 

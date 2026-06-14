@@ -45,15 +45,17 @@ func buildAdminServer(command string, collector *metrics.Collector) (*server.Adm
 //   - The admin server is always torn down via defer: even if the main server
 //     fails to bind, its eagerly-bound listener is released, never leaked.
 //   - All servers share one cancelable context. The main server installs the
-//     sole SIGINT/SIGTERM handler (via server.Server.Start); when it returns —
-//     on signal, ctx cancel, or its own bind error — this cancels the shared
-//     context, which stops the admin Serve goroutine and any auxiliary server.
+//     sole SIGINT/SIGTERM handler (via server.Server.Start); the admin and
+//     auxiliary servers are signal-free (AdminServer.Serve / Server.Serve) and
+//     stop only when this shared context is canceled. When the main server
+//     returns — on signal, ctx cancel, or its own bind error — line below cancels
+//     the shared context, which stops the admin and auxiliary Serve goroutines.
 //   - The admin and auxiliary goroutines are joined before returning, so their
 //     graceful shutdowns complete (no lingering goroutines or listeners).
 //
 // The main server's error takes precedence; an admin/auxiliary error is returned
-// only when the main server shut down cleanly. Because Server.Start and
-// AdminServer.Serve both return nil on a clean ctx-cancel shutdown, a normal
+// only when the main server shut down cleanly. Because Server.Start/Serve and
+// AdminServer.Serve all return nil on a clean ctx-cancel shutdown, a normal
 // SIGINT yields no spurious error.
 func runServers(ctx context.Context, main *server.Server, admin *server.AdminServer, aux ...*server.Server) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -86,7 +88,11 @@ func runServers(ctx context.Context, main *server.Server, admin *server.AdminSer
 		errCh := make(chan error, 1)
 		auxErrChs = append(auxErrChs, errCh)
 		go func(srv *server.Server) {
-			rerr := srv.Start(ctx)
+			// Serve (not Start) so the auxiliary server installs NO signal handler:
+			// the main server is the single SIGINT/SIGTERM owner. This ctx-driven
+			// server shuts down when the shared context is canceled (on signal,
+			// main-server exit, or another server's failure below).
+			rerr := srv.Serve(ctx)
 			if rerr != nil {
 				cancel() // an auxiliary failure tears the main server down too
 			}

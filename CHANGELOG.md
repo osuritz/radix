@@ -21,7 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the admin listener is bound eagerly and always released (never leaked) even if
   the main server fails to start. `--metrics=false` starts no admin server.
   Config validation (`radix validate` and each command at startup) rejects an
-  out-of-range `metrics.port` and a collision with the app port.
+  out-of-range `metrics.port`, a collision with the app port, and an invalid
+  `metrics.path` (empty, not starting with `/`, or colliding with the reserved
+  `/healthz` route) — the last preventing a startup panic from a duplicate mux
+  pattern.
 
 ### Changed
 
