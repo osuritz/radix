@@ -95,6 +95,12 @@ mock:
   fail_status: 500         # status code returned for random failures
   cors: false              # add permissive CORS headers to responses
 
-  # Custom routes and hot-reload (reserved for a later release; currently unused)
+  # Custom routes: a YAML file of routes that take precedence over the
+  # built-ins (exact / :param / regex: / trailing /* glob paths, templated
+  # bodies, per-route delays, and a 404 or proxy fallback). See
+  # examples/mock-routes.yml for the full schema. Equivalent to the positional
+  # `radix mock <file>` argument or the --routes/-r flag.
   routes: ./mocks/routes.yml
+  # Hot-reload the routes file on change (--watch/-w). A broken edit is
+  # rejected and the previous good config keeps serving.
   watch: false

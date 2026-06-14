@@ -98,6 +98,17 @@ func NormalizePrefix(prefix string) string {
 	return strings.TrimRight(prefix, "/")
 }
 
+// WithLatencyAndFailures wraps next with the global latency (fixed + jitter) and
+// random-failure behavior described by cfg, exactly as NewMockHandler applies it
+// to the built-ins. It is exported so the routed mock handler can share the same
+// global chaos behavior. FailStatus defaults to 500 when zero.
+func WithLatencyAndFailures(next http.Handler, cfg MockConfig) http.Handler {
+	if cfg.FailStatus == 0 {
+		cfg.FailStatus = http.StatusInternalServerError
+	}
+	return withLatencyAndFailures(next, cfg)
+}
+
 // withLatencyAndFailures wraps next so that every request first incurs the
 // configured latency (fixed + jitter, context-aware) and may be short-circuited
 // with a random failure response based on cfg.FailRate.
@@ -107,31 +118,74 @@ func NormalizePrefix(prefix string) string {
 // behavior: a client exercising an unknown path still sees realistic latency
 // and failures.
 func withLatencyAndFailures(next http.Handler, cfg MockConfig) http.Handler {
+	failStatus := cfg.FailStatus
+	if failStatus == 0 {
+		failStatus = http.StatusInternalServerError
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Random failure injection: with probability FailRate/100 respond with
-		// FailStatus immediately. mathrand.Float64 returns [0.0, 1.0).
-		if cfg.FailRate > 0 && mathrand.Float64()*100 < cfg.FailRate {
-			w.WriteHeader(cfg.FailStatus)
-			return
-		}
-
-		// Apply latency (fixed + jitter), honoring request cancellation.
-		delay := cfg.Latency
-		if cfg.LatencyJitter > 0 {
-			delay += time.Duration(mathrand.Int64N(int64(cfg.LatencyJitter)))
-		}
-		if delay > 0 {
-			t := time.NewTimer(delay)
-			defer t.Stop()
-			select {
-			case <-r.Context().Done():
-				return
-			case <-t.C:
-			}
-		}
-
-		next.ServeHTTP(w, r)
+		applyLatencyAndFailures(w, r, latencyFailSettings{
+			latency:    cfg.Latency,
+			jitter:     cfg.LatencyJitter,
+			failRate:   cfg.FailRate,
+			failStatus: failStatus,
+		}, next.ServeHTTP)
 	})
+}
+
+// latencyFailSettings is the minimal set of fields applyLatencyAndFailures needs.
+// Both MockConfig (built-ins-only path) and RouteSettings (routed path) project
+// onto it.
+type latencyFailSettings struct {
+	latency    time.Duration
+	jitter     time.Duration
+	failRate   float64
+	failStatus int
+}
+
+// latencyFail adapts a RouteSettings value into latencyFailSettings, defaulting
+// failStatus to 500 when unset.
+func (rs RouteSettings) latencyFail() latencyFailSettings {
+	fs := rs.FailStatus
+	if fs == 0 {
+		fs = http.StatusInternalServerError
+	}
+	return latencyFailSettings{
+		latency:    rs.Latency,
+		jitter:     rs.LatencyJitter,
+		failRate:   rs.FailRate,
+		failStatus: fs,
+	}
+}
+
+// applyLatencyAndFailures applies the random-failure short-circuit and the
+// context-aware latency described by s, then invokes next when the request was
+// neither failed nor canceled. It is the shared core of both the built-ins-only
+// (MockConfig) and routed (RouteSettings) handlers, so a routed handler can read
+// effective latency/fail values from the live store snapshot per request.
+func applyLatencyAndFailures(w http.ResponseWriter, r *http.Request, s latencyFailSettings, next http.HandlerFunc) {
+	// Random failure injection: with probability failRate/100 respond with
+	// failStatus immediately. mathrand.Float64 returns [0.0, 1.0).
+	if s.failRate > 0 && mathrand.Float64()*100 < s.failRate {
+		w.WriteHeader(s.failStatus)
+		return
+	}
+
+	// Apply latency (fixed + jitter), honoring request cancellation.
+	delay := s.latency
+	if s.jitter > 0 {
+		delay += time.Duration(mathrand.Int64N(int64(s.jitter)))
+	}
+	if delay > 0 {
+		t := time.NewTimer(delay)
+		defer t.Stop()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-t.C:
+		}
+	}
+
+	next(w, r)
 }
 
 // registerBuiltins registers the built-in httpbin-style endpoints on mux under

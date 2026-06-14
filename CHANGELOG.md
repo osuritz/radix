@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Global latency (`--latency`, `--latency-jitter`) and chaos (`--fail-rate`, `--fail-status`)
   - Endpoint toggling (`--builtin`), path prefix (`--prefix`), CORS (`--cors`)
   - `/_health` and `/_ready` endpoints (kept at root), TLS/HTTPS, metrics, and graceful shutdown
+  - Custom YAML routes via positional `radix mock <file>` or `--routes`/`-r`, taking precedence over the built-ins
+    - Path matching priority: exact+method > exact+any-method > `:param` > `regex:` > trailing `/*` glob
+    - Templated response bodies (and file bodies) using Go `text/template` syntax: data access via `{{.method}}`, `{{.path}}`, `{{.params.id}}`, `{{.query.q}}`, `{{.headers.Name}}`, `{{.body.field}}`, and generators `{{uuid}}`, `{{now}}`, `{{timestamp}}`, `{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`, `{{base64 "s"}}`
+    - Note: uses idiomatic dot-access Go template syntax (`{{.params.id}}`), deviating from the dot-less examples in `docs/COMMAND_DESIGN.md`
+    - Per-route `delay`/`delay_jitter`; file response bodies resolved relative to the routes file with path-traversal protection; request-body parsing bounded to 1MB (413 on exceed)
+    - Settings block (`latency`, `latency_jitter`, `fail_rate`, `fail_status`, `cors`, `fallback`); CLI flags override file settings
+    - Fallback for unmatched requests: `404` (default) or `proxy` to a configured target
+    - Hot-reload with `--watch`/`-w` (fsnotify): a broken edit is rejected and the previous good config keeps serving; config swaps are lock-free via an atomic pointer
+    - Not yet supported (ignored gracefully if present): `conditions`, `sequence`, weighted `random`, `websocket`, `sse`
+    - Example routes file at `examples/mock-routes.yml`
 - `radix serve` command for static file serving
   - SPA mode (--spa) for single page applications
   - CORS headers (--cors)

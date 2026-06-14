@@ -108,8 +108,9 @@ type AuthConfig struct {
 
 // MockConfig represents configuration for the mock command
 type MockConfig struct {
-	// Routes and Watch configure custom YAML routes and hot-reload. They are
-	// reserved for a later layer and currently unused by the mock command.
+	// Routes names a YAML routes file defining custom routes (also accepted as a
+	// positional arg); Watch enables hot-reload of that file on change. They back
+	// the mock command's --routes/-r and --watch/-w flags.
 	Routes string `mapstructure:"routes"`
 	Watch  bool   `mapstructure:"watch"`
 
