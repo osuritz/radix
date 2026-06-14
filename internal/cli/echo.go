@@ -60,7 +60,9 @@ func init() {
 	echoCmd.Flags().IntVarP(&echoStatus, "status", "s", 200, "default response status code")
 	echoCmd.Flags().DurationVar(&echoDelay, "delay", 0, "delay before responding (e.g. 2s, 500ms)")
 	echoCmd.Flags().DurationVar(&echoDelayJitter, "delay-jitter", 0, "random jitter added to delay")
-	echoCmd.Flags().StringVar(&echoBody, "body", "", "fixed response body (overrides echo JSON)")
+	// An empty --body means "echo mode" (return the echo JSON), not an empty
+	// literal body; pass a non-empty value to return that body verbatim.
+	echoCmd.Flags().StringVar(&echoBody, "body", "", "fixed response body (overrides echo JSON; empty = echo mode)")
 	echoCmd.Flags().StringVar(&echoContentType, "content-type", "application/json", "response Content-Type")
 	echoCmd.Flags().StringArrayVar(&echoHeaders, "header", nil, "add response header (Key: Value)")
 	echoCmd.Flags().BoolVar(&echoEchoBody, "echo-body", true, "include request body in response")
@@ -114,6 +116,16 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 	if cmd.Flags().Changed("delay-from-path") {
 		cfg.Echo.DelayFromPath = echoDelayFromPath
 	}
+	if cmd.Flags().Changed("cors") {
+		cfg.Echo.CORS = echoCORS
+	}
+
+	// Validate the resolved status code. Go's WriteHeader panics for codes
+	// outside [100, 999]; we restrict to [100, 599] to stay consistent with
+	// statusFromPath's accepted range.
+	if n := cfg.Echo.Status; n < 100 || n > 599 {
+		return fmt.Errorf("invalid --status %d: must be between 100 and 599", n)
+	}
 
 	// Build echo handler.
 	echoHandler := server.NewEchoHandler(server.EchoConfig{
@@ -155,7 +167,7 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 	// Apply middleware chain (outermost first).
 	var finalHandler http.Handler = mux
 
-	if echoCORS {
+	if cfg.Echo.CORS {
 		finalHandler = middleware.CORS()(finalHandler)
 	}
 

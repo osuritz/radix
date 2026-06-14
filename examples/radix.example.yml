@@ -80,6 +80,7 @@ echo:
   # Path-based behavior
   status_from_path: false  # /404 or /status/500 sets the response status
   delay_from_path: false   # /delay/2 or /delay/500ms delays the response (capped at 10s)
+  cors: false              # add permissive CORS headers to responses
 
 # Mock command configuration
 mock:

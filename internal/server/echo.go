@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	mathrand "math/rand/v2"
 	"net"
 	"net/http"
@@ -163,7 +164,8 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				e.writeBodyTooLarge(w)
 				return
 			}
-			// Other read errors: continue with whatever was read.
+			// Other read errors: continue with whatever was read, but surface
+			// the error in the echoed JSON instead of swallowing it.
 		}
 	}
 
@@ -182,7 +184,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := e.buildResponse(r, bodyBytes, delayApplied)
+	resp := e.buildResponse(r, bodyBytes, readErr, delayApplied)
 
 	var (
 		payload []byte
@@ -212,8 +214,9 @@ func (e *echoHandler) writeBodyTooLarge(w http.ResponseWriter) {
 
 // buildResponse assembles the echo response map for a request. The body bytes
 // are passed in (already read and limited) to keep the handler the sole reader
-// of the request body.
-func (e *echoHandler) buildResponse(r *http.Request, bodyBytes []byte, delayApplied time.Duration) map[string]any {
+// of the request body. A non-nil readErr (other than the 413 case, handled
+// earlier) is surfaced via the echo section's body_read_error field.
+func (e *echoHandler) buildResponse(r *http.Request, bodyBytes []byte, readErr error, delayApplied time.Duration) map[string]any {
 	now := time.Now()
 
 	request := map[string]any{
@@ -235,6 +238,16 @@ func (e *echoHandler) buildResponse(r *http.Request, bodyBytes []byte, delayAppl
 		request["body_size"] = len(bodyBytes)
 	}
 
+	echoSection := map[string]any{
+		"version":       version.Version,
+		"delay_applied": delayApplied.String(),
+		"request_id":    requestID(),
+	}
+	if readErr != nil {
+		// Surface a partial-read error without failing the response.
+		echoSection["body_read_error"] = readErr.Error()
+	}
+
 	resp := map[string]any{
 		"request": request,
 		"client":  clientInfo(r),
@@ -248,11 +261,7 @@ func (e *echoHandler) buildResponse(r *http.Request, bodyBytes []byte, delayAppl
 			"unix":      now.Unix(),
 			"unix_nano": now.UnixNano(),
 		},
-		"echo": map[string]any{
-			"version":       version.Version,
-			"delay_applied": delayApplied.String(),
-			"request_id":    requestID(),
-		},
+		"echo": echoSection,
 	}
 	return resp
 }
@@ -362,22 +371,31 @@ func delayFromPath(path string) (time.Duration, bool) {
 	}
 	seg := matches[1]
 
-	var d time.Duration
+	// Go-duration form (e.g. "500ms", "1h"): capped at maxPathDelay, negatives rejected.
 	if parsed, err := time.ParseDuration(seg); err == nil {
-		d = parsed
-	} else if secs, err := strconv.ParseFloat(seg, 64); err == nil {
-		d = time.Duration(secs * float64(time.Second))
-	} else {
-		return 0, false
+		if parsed < 0 {
+			return 0, false
+		}
+		if parsed > maxPathDelay {
+			return maxPathDelay, true
+		}
+		return parsed, true
 	}
 
-	if d < 0 {
+	// Bare-seconds form (e.g. "2", "0.5"). Compare against the cap in float
+	// seconds BEFORE converting to a Duration, so large finite values cannot
+	// overflow int64 nanoseconds and defeat the cap.
+	secs, err := strconv.ParseFloat(seg, 64)
+	if err != nil {
 		return 0, false
 	}
-	if d > maxPathDelay {
-		d = maxPathDelay
+	if math.IsNaN(secs) || math.IsInf(secs, 0) || secs < 0 {
+		return 0, false
 	}
-	return d, true
+	if secs >= maxPathDelay.Seconds() {
+		return maxPathDelay, true
+	}
+	return time.Duration(secs * float64(time.Second)), true
 }
 
 // requestID returns a short random hex identifier for an echoed request.

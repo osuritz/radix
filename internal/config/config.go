@@ -97,6 +97,7 @@ type EchoConfig struct {
 	Pretty         bool          `mapstructure:"pretty"`
 	StatusFromPath bool          `mapstructure:"status_from_path"`
 	DelayFromPath  bool          `mapstructure:"delay_from_path"`
+	CORS           bool          `mapstructure:"cors"`
 }
 
 // AuthConfig represents authentication provider configuration for the proxy.
@@ -205,6 +206,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("echo.pretty", true)
 	v.SetDefault("echo.status_from_path", false)
 	v.SetDefault("echo.delay_from_path", false)
+	v.SetDefault("echo.cors", false)
 
 	// Mock defaults
 	v.SetDefault("mock.watch", false)

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -381,6 +383,135 @@ func TestEcho_PrettyPrint(t *testing.T) {
 	rec := doEcho(cfg, req)
 	if !strings.Contains(rec.Body.String(), "\n  ") {
 		t.Errorf("expected indented JSON when pretty=true, got %q", rec.Body.String())
+	}
+}
+
+func TestDelayFromPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantDur time.Duration
+		wantOK  bool
+	}{
+		{"bare seconds", "/delay/2", 2 * time.Second, true},
+		{"go duration ms", "/delay/500ms", 500 * time.Millisecond, true},
+		{"bare seconds over cap", "/delay/100", maxPathDelay, true},
+		{"huge finite overflow guard", "/delay/1e9", maxPathDelay, true},
+		{"go duration over cap", "/delay/1h", maxPathDelay, true},
+		{"negative rejected", "/delay/-1", 0, false},
+		{"non-numeric rejected", "/delay/abc", 0, false},
+		{"nan rejected", "/delay/NaN", 0, false},
+		{"inf rejected", "/delay/Inf", 0, false},
+		{"no match", "/notdelay/2", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := delayFromPath(tt.path)
+			if ok != tt.wantOK {
+				t.Fatalf("path %q: ok = %v, want %v (got dur %v)", tt.path, ok, tt.wantOK, got)
+			}
+			if ok && got != tt.wantDur {
+				t.Errorf("path %q: dur = %v, want %v", tt.path, got, tt.wantDur)
+			}
+		})
+	}
+}
+
+func TestStatusFromPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantOK     bool
+	}{
+		{"bare code in range", "/404", 404, true},
+		{"status prefix in range", "/status/500", 500, true},
+		{"out of range high", "/999", 0, false},
+		{"out of range low not 3 digits", "/99", 0, false},
+		{"non-numeric", "/abc", 0, false},
+		{"no match extra segment", "/status/500/x", 0, false},
+		{"upper bound 599", "/status/599", 599, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := statusFromPath(tt.path)
+			if ok != tt.wantOK {
+				t.Fatalf("path %q: ok = %v, want %v (got %d)", tt.path, ok, tt.wantOK, got)
+			}
+			if ok && got != tt.wantStatus {
+				t.Errorf("path %q: status = %d, want %d", tt.path, got, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// errReader returns an error partway through to exercise the body_read_error path.
+type errReader struct{}
+
+func (errReader) Read(_ []byte) (int, error) { return 0, errors.New("simulated read failure") }
+func (errReader) Close() error               { return nil }
+
+func TestEcho_BodyReadErrorSurfaced(t *testing.T) {
+	cfg := defaultEchoConfig()
+	// No BodyLimit so the error is a plain read error, not a 413.
+	cfg.BodyLimit = 0
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Body = errReader{}
+
+	rec := doEcho(cfg, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (error surfaced, not failed), got %d", rec.Code)
+	}
+	out := decodeEcho(t, rec)
+	echoSection, ok := out["echo"].(map[string]any)
+	if !ok {
+		t.Fatalf("echo section missing: %#v", out["echo"])
+	}
+	msg, ok := echoSection["body_read_error"].(string)
+	if !ok || !strings.Contains(msg, "simulated read failure") {
+		t.Errorf("expected body_read_error to contain the read error, got %#v", echoSection["body_read_error"])
+	}
+}
+
+func TestEcho_NoBodyReadErrorWhenClean(t *testing.T) {
+	cfg := defaultEchoConfig()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello"))
+	rec := doEcho(cfg, req)
+	out := decodeEcho(t, rec)
+	echoSection := out["echo"].(map[string]any)
+	if _, ok := echoSection["body_read_error"]; ok {
+		t.Errorf("body_read_error should be absent on a clean read, got %#v", echoSection["body_read_error"])
+	}
+}
+
+func TestEcho_DelayContextCancellation(t *testing.T) {
+	cfg := defaultEchoConfig()
+	cfg.Delay = 5 * time.Second // long enough that we'd notice if we waited
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+
+	// Cancel shortly after the request starts.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	NewEchoHandler(cfg).ServeHTTP(rec, req)
+	elapsed := time.Since(start)
+
+	if elapsed >= cfg.Delay {
+		t.Fatalf("expected ServeHTTP to return well before the %v delay, elapsed %v", cfg.Delay, elapsed)
+	}
+	if elapsed > time.Second {
+		t.Errorf("expected prompt return on cancellation, elapsed %v", elapsed)
+	}
+	// On cancellation the handler returns before writing the echo body.
+	if body := rec.Body.String(); strings.Contains(body, `"request"`) {
+		t.Errorf("expected no echo body on cancellation, got %q", body)
 	}
 }
 
