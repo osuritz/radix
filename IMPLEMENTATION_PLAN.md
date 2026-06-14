@@ -438,7 +438,7 @@ Output:
   "version": "1.0.0",
   "commit": "abc123",
   "build_date": "2025-12-31",
-  "go_version": "go1.22.0",
+  "go_version": "go1.25.0",
   "platform": "linux/amd64"
 }
 ```
@@ -718,7 +718,7 @@ mock:
 
 - [ ] **Build Automation**
   - [ ] Multi-platform build matrix (macOS, Windows, Linux)
-  - [ ] Multiple Go versions (1.21, 1.22, 1.23)
+  - [ ] Go 1.25 (single pinned version)
   - [ ] Build caching for faster CI runs
   - [ ] Artifact uploading for builds
 
@@ -1102,7 +1102,7 @@ changelog:
 ```yaml
 # .github/workflows/ci.yml
 - Lint (golangci-lint)
-- Test (multiple Go versions: 1.21, 1.22, 1.23)
+- Test (Go 1.25)
 - Build (multiple platforms)
 - Security scan (gosec, govulncheck)
 - Release (on tags)
@@ -1204,7 +1204,7 @@ All platforms will be distributed via GitHub releases with downloadable, signed 
 - **Usage**: `radix serve` starts server in <100ms
 - **Size**: Binary <10MB (uncompressed)
 - **Performance**: Handle 1000+ req/s for static serving
-- **Compatibility**: Go 1.21+ on macOS, Windows, Linux
+- **Compatibility**: Go 1.25+ on macOS, Windows, Linux
 
 ## 12. Binary Verification Guide
 
