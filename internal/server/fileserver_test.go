@@ -1,13 +1,16 @@
 package server_test
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/osuritz/radix/internal/server"
+	"github.com/osuritz/radix/internal/server/middleware"
 )
 
 func setupTestDir(t *testing.T) string {
@@ -145,6 +148,102 @@ func TestFileServer_SPADoesNotFallbackForAssets(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// devLog wraps h in the dev logging middleware writing to buf, with color
+// auto-disabled (bytes.Buffer is a non-TTY). It centralizes the env hygiene the
+// color resolver depends on.
+func devLog(t *testing.T, buf *bytes.Buffer, h http.Handler) http.Handler {
+	t.Helper()
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+	return middleware.Logging(middleware.LoggingConfig{
+		Format: middleware.LogFormatDev,
+		Output: buf,
+	})(h)
+}
+
+// TestFileServer_SPAFallbackAnnotatesTarget verifies that an SPA index fallback
+// records Target="fallback", so the dev access log shows a "→ fallback" column.
+func TestFileServer_SPAFallbackAnnotatesTarget(t *testing.T) {
+	dir := setupTestDir(t)
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+		SPA:   true,
+	})
+
+	var buf bytes.Buffer
+	logged := devLog(t, &buf, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/about", nil)
+	logged.ServeHTTP(httptest.NewRecorder(), req)
+
+	if out := buf.String(); !strings.Contains(out, "→ fallback") {
+		t.Errorf("SPA fallback dev log should show \"→ fallback\": %q", out)
+	}
+}
+
+// TestFileServer_PlainAssetNoTarget verifies that serving a real static asset
+// adds no target column to the dev access log (no arrow).
+func TestFileServer_PlainAssetNoTarget(t *testing.T) {
+	dir := setupTestDir(t)
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+		SPA:   true,
+	})
+
+	var buf bytes.Buffer
+	logged := devLog(t, &buf, handler)
+
+	// style.css is a real file -> no fallback -> no target column.
+	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	logged.ServeHTTP(httptest.NewRecorder(), req)
+
+	if out := buf.String(); strings.Contains(out, "→") {
+		t.Errorf("plain asset hit must not show a target column: %q", out)
+	}
+}
+
+// TestFileServer_RootIndexNoTarget verifies that serving the real root index
+// (a normal hit, not a fallback) adds no target column.
+func TestFileServer_RootIndexNoTarget(t *testing.T) {
+	dir := setupTestDir(t)
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+		SPA:   true,
+	})
+
+	var buf bytes.Buffer
+	logged := devLog(t, &buf, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	logged.ServeHTTP(httptest.NewRecorder(), req)
+
+	if out := buf.String(); strings.Contains(out, "→") {
+		t.Errorf("real root index hit must not show a target column: %q", out)
+	}
+}
+
+// TestFileServer_AnnotationNilSafe verifies the file server does not panic when
+// no logging middleware seeded an annotation, including on the SPA fallback path.
+func TestFileServer_AnnotationNilSafe(t *testing.T) {
+	dir := setupTestDir(t)
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+		SPA:   true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/about", nil) // triggers fallback
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req) // no logging middleware -> no annotation
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

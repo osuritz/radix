@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,50 @@ const (
 	// LogFormatDev is developer-friendly colored format
 	LogFormatDev LogFormat = "dev"
 )
+
+// LogAnnotation carries request-scoped context that the generic logging
+// middleware cannot infer on its own — chiefly what a request was routed to.
+//
+// The logging middleware seeds a fresh *LogAnnotation into each request's
+// context before invoking the next handler; downstream handlers (e.g. the
+// reverse proxy or the SPA file server) may then populate it. Because each
+// request gets its own pointer, there is no shared mutable state and no need
+// for synchronization: the handler that mutates the annotation runs to
+// completion (synchronously, on the request goroutine) before the middleware
+// reads it back. Only the dev access-log format renders these fields; CLF and
+// Extended CLF ignore the annotation entirely.
+type LogAnnotation struct {
+	// Kind labels the request handler that produced the response (e.g.
+	// "proxy", "fallback"). It is currently informational and reserved for
+	// future use; the dev format renders Target, not Kind.
+	Kind string
+	// Target identifies what the request was routed to, rendered in the dev
+	// format as a "→ <target>" column (e.g. an upstream host for the proxy, or
+	// "fallback" for an SPA index fallback). Empty means no target column.
+	Target string
+}
+
+// logAnnotationKey is the unexported context key under which a *LogAnnotation
+// is stored. Using a dedicated unexported type avoids collisions with any other
+// context value.
+type logAnnotationKey struct{}
+
+// withLogAnnotation returns a copy of ctx carrying a fresh, empty
+// *LogAnnotation, along with that pointer so the caller can pass it to
+// downstream handlers. The logging middleware seeds one per request.
+func withLogAnnotation(ctx context.Context) (context.Context, *LogAnnotation) {
+	a := &LogAnnotation{}
+	return context.WithValue(ctx, logAnnotationKey{}, a), a
+}
+
+// LogAnnotationFromContext returns the *LogAnnotation seeded into ctx by the
+// logging middleware, or nil if none is present (e.g. when the logging
+// middleware is not installed). Callers must nil-check the result before
+// mutating it.
+func LogAnnotationFromContext(ctx context.Context) *LogAnnotation {
+	a, _ := ctx.Value(logAnnotationKey{}).(*LogAnnotation)
+	return a
+}
 
 // Dev-format column layout constants.
 //
@@ -114,12 +159,19 @@ func Logging(config LoggingConfig) func(http.Handler) http.Handler {
 				size:           0,
 			}
 
+			// Seed a fresh per-request annotation into the context so downstream
+			// handlers (proxy, SPA file server) can record what the request was
+			// routed to. Each request owns its own pointer, so there is no shared
+			// state to synchronize.
+			ctx, annotation := withLogAnnotation(r.Context())
+			r = r.WithContext(ctx)
+
 			// Process request
 			next.ServeHTTP(wrapped, r)
 
 			// Log after request is complete
 			duration := time.Since(start)
-			write(formatRequest(r, wrapped.status, wrapped.size, duration, config.Format, color))
+			write(formatRequest(r, wrapped.status, wrapped.size, duration, config.Format, color, annotation.Target))
 		})
 	}
 }
@@ -181,17 +233,19 @@ func isTerminal(w io.Writer) bool {
 
 // formatRequest renders a request into a single log line (newline-terminated)
 // for the given format. CLF and Extended CLF are byte-identical to their
-// historical output; only dev coloring is gated on color.
-func formatRequest(r *http.Request, status, size int, duration time.Duration, format LogFormat, color bool) string {
+// historical output and ignore target; only the dev format renders the
+// "→ target" column (and only when target is non-empty), with coloring gated
+// on color.
+func formatRequest(r *http.Request, status, size int, duration time.Duration, format LogFormat, color bool, target string) string {
 	switch format {
 	case LogFormatCLF:
 		return formatCLF(r, status, size)
 	case LogFormatExtendedCLF:
 		return formatExtendedCLF(r, status, size)
 	case LogFormatDev:
-		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color)
+		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color, target)
 	default:
-		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color)
+		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color, target)
 	}
 }
 
@@ -266,17 +320,24 @@ func formatExtendedCLF(r *http.Request, status, size int) string {
 //
 // Layout (newline-terminated), columns in order:
 //
-//	<dim HH:MM:SS> <method,padded> <path,padded/truncated> <status> <latency>[ <size>]
+//	<dim HH:MM:SS> <method,padded> <path,padded/truncated> [<dim →> <target> ]<status> <latency>[ <size>]
 //
-// e.g. (no color):
+// e.g. (no color, no target):
 //
 //	14:23:01 GET     /index.html                  200 12ms 2.3KB
 //
+// and with a target (e.g. a proxy upstream or an SPA fallback):
+//
+//	14:23:01 GET     /api/users                   → localhost:3000 200 12ms 2.3KB
+//
 // The timestamp is dimmed, the method is colored via getMethodColor, and the
-// status is colored via getStatusColor when color is true. The size column is
-// omitted entirely when size == 0 (no "-" placeholder). now is injected so the
-// formatter is deterministically testable.
-func formatDevLine(now time.Time, method, uri string, status, size int, d time.Duration, color bool) string {
+// status is colored via getStatusColor when color is true. The "→ target"
+// segment is rendered only when target is non-empty; the arrow itself is
+// dimmed (when color is on) and the target value is left uncolored. When target
+// is empty the line is byte-identical to the no-target layout. The size column
+// is omitted entirely when size == 0 (no "-" placeholder). now is injected so
+// the formatter is deterministically testable.
+func formatDevLine(now time.Time, method, uri string, status, size int, d time.Duration, color bool, target string) string {
 	ts := now.Format("15:04:05")
 	// Cap pathological custom methods to the method column width so they cannot
 	// shift the path/status columns to their right. Standard methods are <= 7
@@ -311,6 +372,23 @@ func formatDevLine(now time.Time, method, uri string, status, size int, d time.D
 	// Path (padded / truncated).
 	b.WriteString(paddedPath)
 	b.WriteByte(' ')
+
+	// Target ("→ <target>"), only when meaningful. The arrow is dimmed; the
+	// target value is left uncolored so it reads as a quiet annotation. Omitted
+	// entirely (no extra spacing) when target is empty, keeping the no-target
+	// line byte-identical to the original layout.
+	if target != "" {
+		if color {
+			b.WriteString(ansiDim)
+			b.WriteString("→")
+			b.WriteString(ansiReset)
+		} else {
+			b.WriteString("→")
+		}
+		b.WriteByte(' ')
+		b.WriteString(target)
+		b.WriteByte(' ')
+	}
 
 	// Status (colored).
 	if color {
