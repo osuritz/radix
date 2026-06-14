@@ -310,9 +310,12 @@ func tlsInfo(state *tls.ConnectionState) map[string]any {
 	}
 
 	// Use an untyped nil (not a typed nil map) so the field is a true JSON null
-	// and an absent cert compares == nil for callers inspecting the map.
+	// and an absent cert compares == nil for callers inspecting the map. The
+	// non-nil first-element guard is defensive: real crypto/tls states never
+	// contain nil entries, but tlsInfo is exercised directly with synthetic
+	// states, and clientCertInfo dereferences the certificate.
 	var clientCert any
-	if len(state.PeerCertificates) > 0 {
+	if len(state.PeerCertificates) > 0 && state.PeerCertificates[0] != nil {
 		clientCert = clientCertInfo(state.PeerCertificates[0])
 	}
 
@@ -338,6 +341,12 @@ func clientCertInfo(cert *x509.Certificate) map[string]any {
 		ipAddrs = append(ipAddrs, ip.String())
 	}
 
+	// Build dns_names the same way as ip_addresses so an absent SAN list
+	// serializes to [] (not null), keeping the two sibling list fields a
+	// consistent JSON shape.
+	dnsNames := make([]string, 0, len(cert.DNSNames))
+	dnsNames = append(dnsNames, cert.DNSNames...)
+
 	return map[string]any{
 		"subject": map[string]any{
 			"cn": cert.Subject.CommonName,
@@ -350,7 +359,7 @@ func clientCertInfo(cert *x509.Certificate) map[string]any {
 		"serial":       cert.SerialNumber.String(),
 		"not_before":   cert.NotBefore.Format(time.RFC3339),
 		"not_after":    cert.NotAfter.Format(time.RFC3339),
-		"dns_names":    cert.DNSNames,
+		"dns_names":    dnsNames,
 		"ip_addresses": ipAddrs,
 	}
 }

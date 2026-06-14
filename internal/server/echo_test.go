@@ -492,6 +492,16 @@ func TestTLSInfo_ClientCertAbsent(t *testing.T) {
 				PeerCertificates: []*x509.Certificate{},
 			},
 		},
+		{
+			// Real crypto/tls states never contain nil entries, but tlsInfo is
+			// exercised directly with synthetic states; a nil first element must
+			// yield client_cert=null rather than panicking on dereference.
+			name: "tls with nil first peer cert",
+			state: &tls.ConnectionState{
+				Version:          tls.VersionTLS13,
+				PeerCertificates: []*x509.Certificate{nil},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -504,6 +514,50 @@ func TestTLSInfo_ClientCertAbsent(t *testing.T) {
 				t.Errorf("expected client_cert=nil when no peer cert, got %#v", v)
 			}
 		})
+	}
+}
+
+func TestTLSInfo_ClientCertEmptySANsAreEmptyArrays(t *testing.T) {
+	// A certificate with no SAN entries: both dns_names and ip_addresses must be
+	// non-nil empty []string so they serialize to [] (a consistent shape with
+	// the populated case), never null.
+	cert := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "no-sans.example.test"},
+		NotBefore:    time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC),
+		NotAfter:     time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC),
+		// DNSNames and IPAddresses left nil on purpose.
+	}
+	state := &tls.ConnectionState{
+		Version:          tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{cert},
+	}
+
+	info := tlsInfo(state)
+	clientCert, ok := info["client_cert"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected populated client_cert map, got %#v", info["client_cert"])
+	}
+
+	dns, ok := clientCert["dns_names"].([]string)
+	if !ok || dns == nil || len(dns) != 0 {
+		t.Errorf("dns_names = %#v, want non-nil empty []string", clientCert["dns_names"])
+	}
+	ips, ok := clientCert["ip_addresses"].([]string)
+	if !ok || ips == nil || len(ips) != 0 {
+		t.Errorf("ip_addresses = %#v, want non-nil empty []string", clientCert["ip_addresses"])
+	}
+
+	// Lock the serialized contract: empty SAN lists must marshal to [], not null.
+	raw, err := json.Marshal(clientCert)
+	if err != nil {
+		t.Fatalf("marshal client_cert: %v", err)
+	}
+	if got := string(raw); !strings.Contains(got, `"dns_names":[]`) {
+		t.Errorf("expected \"dns_names\":[] in serialized client_cert, got %s", got)
+	}
+	if got := string(raw); !strings.Contains(got, `"ip_addresses":[]`) {
+		t.Errorf("expected \"ip_addresses\":[] in serialized client_cert, got %s", got)
 	}
 }
 
@@ -540,11 +594,11 @@ func TestEcho_TLSClientCertEndToEnd(t *testing.T) {
 		t.Errorf("echoed serial = %v, want %v", cc["serial"], clientCert.SerialNumber.String())
 	}
 	dns, _ := cc["dns_names"].([]any)
-	if len(dns) != 2 || dns[0] != "client.example.test" {
+	if len(dns) != 2 || dns[0] != "client.example.test" || dns[1] != "alt.example.test" {
 		t.Errorf("echoed dns_names = %#v", cc["dns_names"])
 	}
 	ips, _ := cc["ip_addresses"].([]any)
-	if len(ips) != 2 || ips[0] != "192.0.2.10" {
+	if len(ips) != 2 || ips[0] != "192.0.2.10" || ips[1] != "2001:db8::1" {
 		t.Errorf("echoed ip_addresses = %#v", cc["ip_addresses"])
 	}
 }
