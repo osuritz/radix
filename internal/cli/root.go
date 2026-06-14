@@ -138,6 +138,7 @@ func init() {
 	rootCmd.AddCommand(gencertCmd)
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(proxyCmd)
+	rootCmd.AddCommand(echoCmd)
 }
 
 // GetConfig returns the loaded configuration

@@ -84,10 +84,19 @@ type ProxyConfig struct {
 
 // EchoConfig represents configuration for the echo command
 type EchoConfig struct {
-	Delay   time.Duration `mapstructure:"delay"`
-	Status  int           `mapstructure:"status"`
-	Body    string        `mapstructure:"body"`
-	Headers []string      `mapstructure:"headers"`
+	Delay          time.Duration `mapstructure:"delay"`
+	DelayJitter    time.Duration `mapstructure:"delay_jitter"`
+	Status         int           `mapstructure:"status"`
+	Body           string        `mapstructure:"body"`
+	ContentType    string        `mapstructure:"content_type"`
+	Headers        []string      `mapstructure:"headers"`
+	EchoBody       bool          `mapstructure:"echo_body"`
+	EchoHeaders    bool          `mapstructure:"echo_headers"`
+	EchoQuery      bool          `mapstructure:"echo_query"`
+	BodyLimit      int           `mapstructure:"body_limit"`
+	Pretty         bool          `mapstructure:"pretty"`
+	StatusFromPath bool          `mapstructure:"status_from_path"`
+	DelayFromPath  bool          `mapstructure:"delay_from_path"`
 }
 
 // AuthConfig represents authentication provider configuration for the proxy.
@@ -186,7 +195,16 @@ func setDefaults(v *viper.Viper) {
 
 	// Echo defaults
 	v.SetDefault("echo.delay", "0")
+	v.SetDefault("echo.delay_jitter", "0")
 	v.SetDefault("echo.status", 200)
+	v.SetDefault("echo.content_type", "application/json")
+	v.SetDefault("echo.echo_body", true)
+	v.SetDefault("echo.echo_headers", true)
+	v.SetDefault("echo.echo_query", true)
+	v.SetDefault("echo.body_limit", 1048576)
+	v.SetDefault("echo.pretty", true)
+	v.SetDefault("echo.status_from_path", false)
+	v.SetDefault("echo.delay_from_path", false)
 
 	// Mock defaults
 	v.SetDefault("mock.watch", false)
