@@ -166,8 +166,13 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	// Apply middleware chain (outermost first)
 	var finalHandler http.Handler = mux
 
-	// Auth header injection
-	provider := middleware.ResolveProvider("", cfg.Proxy.Headers)
+	// Auth header injection. An explicit cfg.Proxy.Auth.Provider selects a named
+	// provider (compiled in via RegisterHeaderProvider); when empty, the registry
+	// auto-detects a single provider or falls back to the static --header values.
+	provider, err := middleware.ResolveProvider(cfg.Proxy.Auth.Provider, cfg.Proxy.Headers)
+	if err != nil {
+		return fmt.Errorf("auth provider resolution failed: %w", err)
+	}
 	if provider != nil {
 		finalHandler = middleware.InjectHeaders(provider)(finalHandler)
 	}

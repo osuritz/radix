@@ -46,11 +46,14 @@ func TestGetHeaderProvider_Unknown(t *testing.T) {
 func TestResolveProvider_ExplicitConfigName(t *testing.T) {
 	resetProviders()
 
-	p := &testProvider{name: "azure"}
-	RegisterHeaderProvider("azure", p)
+	RegisterHeaderProvider("azure", &testProvider{name: "azure"})
 	RegisterHeaderProvider("okta", &testProvider{name: "okta"})
 
-	got := ResolveProvider("azure", nil)
+	// Explicit selection among multiple registered providers.
+	got, err := ResolveProvider("azure", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got == nil {
 		t.Fatal("ResolveProvider returned nil")
 	}
@@ -62,7 +65,10 @@ func TestResolveProvider_ExplicitConfigName(t *testing.T) {
 func TestResolveProvider_ExplicitConfigName_NotFound(t *testing.T) {
 	resetProviders()
 
-	got := ResolveProvider("missing", nil)
+	got, err := ResolveProvider("nope", nil)
+	if err == nil {
+		t.Fatal("ResolveProvider returned nil error, want error for unregistered provider")
+	}
 	if got != nil {
 		t.Errorf("ResolveProvider returned %v, want nil for missing provider", got)
 	}
@@ -73,7 +79,10 @@ func TestResolveProvider_AutoDetectSingle(t *testing.T) {
 
 	RegisterHeaderProvider("okta", &testProvider{name: "okta"})
 
-	got := ResolveProvider("", nil)
+	got, err := ResolveProvider("", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got == nil {
 		t.Fatal("ResolveProvider returned nil, want auto-detected provider")
 	}
@@ -86,7 +95,10 @@ func TestResolveProvider_StaticFallback(t *testing.T) {
 	resetProviders()
 
 	headers := []string{"Authorization: Bearer token123", "X-Api-Key: key"}
-	got := ResolveProvider("", headers)
+	got, err := ResolveProvider("", headers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got == nil {
 		t.Fatal("ResolveProvider returned nil, want StaticProvider")
 	}
@@ -98,7 +110,10 @@ func TestResolveProvider_StaticFallback(t *testing.T) {
 func TestResolveProvider_NilWhenNothingConfigured(t *testing.T) {
 	resetProviders()
 
-	got := ResolveProvider("", nil)
+	got, err := ResolveProvider("", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != nil {
 		t.Errorf("ResolveProvider returned %v, want nil", got)
 	}
@@ -111,7 +126,11 @@ func TestResolveProvider_AmbiguousMultipleProviders(t *testing.T) {
 	RegisterHeaderProvider("azure", &testProvider{name: "azure"})
 
 	// No config name specified, multiple providers => should not auto-detect
-	got := ResolveProvider("", nil)
+	// and must not error (auto-detection stays silent on ambiguity).
+	got, err := ResolveProvider("", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != nil {
 		t.Errorf("ResolveProvider returned %v, want nil for ambiguous providers", got)
 	}
@@ -125,7 +144,10 @@ func TestResolveProvider_AmbiguousWithStaticFallback(t *testing.T) {
 
 	// Multiple providers but static headers provided => static fallback
 	headers := []string{"X-Fallback: yes"}
-	got := ResolveProvider("", headers)
+	got, err := ResolveProvider("", headers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got == nil {
 		t.Fatal("ResolveProvider returned nil, want StaticProvider fallback")
 	}
