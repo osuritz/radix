@@ -62,3 +62,6 @@ radix.yml
 # Temporary files
 tmp/
 temp/
+
+# Local AI session-state / memory notes (not tracked)
+CLAUDE_MEMORY.md

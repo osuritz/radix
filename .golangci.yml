@@ -89,10 +89,14 @@ linters:
           - gocyclo
           - gosec
         path: _test\.go
+      # All internal/ packages are private (not importable externally), so the
+      # revive var-naming warning about package names shadowing Go stdlib
+      # packages (e.g. version, tls, metrics) is noise. Scope the exclusion to
+      # exactly that message so other package-name checks (meaningless names,
+      # MixedCaps) stay enforced.
       - linters:
           - revive
-        path: internal/metrics/
-        text: "var-naming.*package names"
+        text: "var-naming.*conflict with Go standard library package names"
       - linters:
           - all
         path: vendor/

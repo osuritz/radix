@@ -155,7 +155,7 @@ This project uses GitHub Actions for continuous integration and automated releas
   - Linting with golangci-lint
   - Security scanning with gosec and govulncheck
   - Tests across multiple platforms (macOS, Linux, Windows)
-  - Requires Go 1.24+
+  - Requires Go 1.25+
   - Code coverage reporting
 
 - **Release Workflow**: Triggered on version tags (e.g., `v1.0.0`)
