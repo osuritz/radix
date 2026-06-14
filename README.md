@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/osuritz/radix)](https://goreportcard.com/report/github.com/osuritz/radix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Multi-mode HTTP server for local development. Provides static file serving, reverse proxy, request echo, and API mocking capabilities—all running locally with no external services or data leakage. Built in Go for zero-dependency deployment across platforms.
+Multi-mode HTTP server for local development. Provides static file serving, reverse proxy, request echo, and API mocking capabilities—all running locally with no external services or data leakage. Built in Go and distributed as a single self-contained binary across platforms, with a deliberately small, curated set of dependencies.
 
 ## Who Is This For?
 
@@ -145,9 +145,37 @@ radix proxy https://api.internal:443 \
 
 ### Auth header injection
 
-Radix supports pluggable auth header providers via a Go interface. Corporate forks can compile in a custom `HeaderProvider` (e.g., for Okta or Azure AD) that automatically injects auth tokens into every proxied request — no per-engineer configuration needed.
+Useful when you're developing locally against a backend that normally sits behind
+an edge/zero-trust gateway: the proxy can inject the same auth headers the gateway
+would, so you don't hand-pass `--header` flags on every run.
 
-For static headers, use `--header`. For dynamic token injection, see `IMPLEMENTATION_PLAN.md` Section 15 and `internal/server/middleware/auth.go`.
+**Header values from the environment and the OS keychain.** Values in `--header`
+and `proxy.headers` may contain `${...}` tokens, resolved per request:
+
+- `${env:NAME}` — value of an environment variable
+- `${keychain:SERVICE/ACCOUNT}` — a secret from the OS keychain (macOS Keychain,
+  Windows Credential Manager, or Linux Secret Service)
+
+```bash
+radix proxy http://localhost:3000 \
+  --header "X-Auth-Request-Email: ${env:USER_EMAIL}" \
+  --header "Authorization: Bearer ${keychain:work-cli/jwt}"
+```
+
+Keychain reads are cached briefly, so a token rotated by another tool is picked up
+without restarting radix. Resolution fails loud — an unset variable or a keychain
+miss returns `502` rather than silently proxying without credentials — and
+injected values are never written to logs.
+
+For a structured, validatable alternative to inline `${...}` tokens, set
+`proxy.auth.provider: headers` and list each header (`value` / `env` / `keychain`
+plus an optional `prefix`) under `proxy.auth.config.headers`; see
+`examples/radix.example.yml`.
+
+**Forks.** For credentials that need real refresh logic (OAuth/OIDC, Vault, STS),
+compile in a custom `HeaderProvider` (e.g. for Okta or Azure AD); a single
+registered provider is auto-detected with no config. See `IMPLEMENTATION_PLAN.md`
+Section 15 and `internal/server/middleware/auth.go`.
 
 ### All proxy flags
 

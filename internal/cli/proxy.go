@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	cryptotls "crypto/tls"
@@ -166,15 +167,27 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	// Apply middleware chain (outermost first)
 	var finalHandler http.Handler = mux
 
-	// Auth header injection. An explicit cfg.Proxy.Auth.Provider selects a named
-	// provider (compiled in via RegisterHeaderProvider); when empty, the registry
-	// auto-detects a single provider or falls back to the static --header values.
-	provider, err := middleware.ResolveProvider(cfg.Proxy.Auth.Provider, cfg.Proxy.Headers)
+	// Auth header injection. The provider is chosen from the full auth settings:
+	// the reserved "headers" provider builds the built-in structured provider
+	// from proxy.auth.config (Surface B); an explicit fork name selects a
+	// compiled-in provider; otherwise the registry auto-detects a single
+	// provider or falls back to the --header / proxy.headers values, resolving
+	// any ${env:...} / ${keychain:...} tokens per request (Surface A).
+	provider, err := middleware.ResolveAuthProvider(middleware.AuthSettings{
+		Provider:      cfg.Proxy.Auth.Provider,
+		Config:        cfg.Proxy.Auth.Config,
+		StaticHeaders: cfg.Proxy.Headers,
+	})
 	if err != nil {
 		return fmt.Errorf("auth provider resolution failed: %w", err)
 	}
 	if provider != nil {
-		finalHandler = middleware.InjectHeaders(provider)(finalHandler)
+		var injectOpts []middleware.InjectOption
+		if cfg.Verbose {
+			// Names-only summary; injected secret values are never logged.
+			injectOpts = append(injectOpts, middleware.WithVerboseLogging(os.Stdout))
+		}
+		finalHandler = middleware.InjectHeaders(provider, injectOpts...)(finalHandler)
 	}
 
 	if cfg.Proxy.CORS {
