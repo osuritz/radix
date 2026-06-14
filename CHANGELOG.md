@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Polished `dev` access-log format** — the developer-friendly log line is now a
+  single, aligned, Vite-style row: a dimmed short timestamp (`HH:MM:SS`), the
+  color-coded method (padded so paths align), the request path (padded, with
+  long paths truncated by a single `…`), the color-coded status, the latency,
+  and a human-readable size that is omitted entirely for zero-size responses.
+  Color is now auto-disabled when `NO_COLOR` is set or when output is not a TTY
+  (in addition to the existing `--no-color`), with `FORCE_COLOR` / `CLICOLOR_FORCE`
+  available to force it on; the precedence is documented in the README. The
+  logging middleware also gained an injectable `io.Writer` (`LoggingConfig.Output`,
+  defaulting to stdout) and serializes writes so concurrent request lines never
+  interleave. The CLF and Extended CLF formats are unchanged (byte-identical).
+
 ### Added
 
 - **Config-driven auth header values from env vars and the OS keychain** — proxy
