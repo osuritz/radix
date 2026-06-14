@@ -1,10 +1,6 @@
 package server
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,10 +129,14 @@ func TestRouteFuncs_Lorem(t *testing.T) {
 }
 
 func TestRouteFuncs_Hash(t *testing.T) {
-	const text = "radix"
-	sha256Want := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte(text)); return s[:] }())
-	sha1Want := hex.EncodeToString(func() []byte { s := sha1.Sum([]byte(text)); return s[:] }())
-	md5Want := hex.EncodeToString(func() []byte { s := md5.Sum([]byte(text)); return s[:] }())
+	// Independently-known digest vectors for the fixed input "radix" (verified
+	// out-of-band via shasum/md5). Hardcoding the expecteds avoids recomputing
+	// them with crypto/* in the test tree and asserts against known-good values.
+	const (
+		radixSHA256 = "da7f85eaf3d0452479031da124d28778aaf15cc756a6c909d7dc708fade343f0"
+		radixSHA1   = "5f33e8ddd36b0c849687df732835b9abbe9b347b"
+		radixMD5    = "be4ecdb8a8ebc5a7a7740d21d2b71462"
+	)
 
 	tests := []struct {
 		name string
@@ -145,11 +145,11 @@ func TestRouteFuncs_Hash(t *testing.T) {
 	}{
 		// Known SHA-256 vector for the empty string (well-published constant).
 		{"sha256 empty vector", `{{hash "sha256" ""}}`, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{"sha256", `{{hash "sha256" "radix"}}`, sha256Want},
-		{"sha1", `{{hash "sha1" "radix"}}`, sha1Want},
-		{"md5", `{{hash "md5" "radix"}}`, md5Want},
+		{"sha256", `{{hash "sha256" "radix"}}`, radixSHA256},
+		{"sha1", `{{hash "sha1" "radix"}}`, radixSHA1},
+		{"md5", `{{hash "md5" "radix"}}`, radixMD5},
 		// Algorithm name is case-insensitive.
-		{"uppercase algo", `{{hash "SHA256" "radix"}}`, sha256Want},
+		{"uppercase algo", `{{hash "SHA256" "radix"}}`, radixSHA256},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
