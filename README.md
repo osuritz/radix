@@ -227,7 +227,10 @@ and `--echo-query`; cap the request body with `--body-limit` (413 on exceed) and
 control formatting with `--pretty`. `/_health` and `/_ready` are served at the
 root and are not echoed. Use `--cors` for permissive CORS, and the global TLS
 flags for HTTPS (the response's `tls` block reports the negotiated version,
-cipher, and server name).
+cipher, and server name). Under client-auth/mTLS the `tls.client_cert` block
+reports the presented client certificate (subject CN/O, issuer CN/O, serial,
+validity window, and DNS/IP subject-alternative names); it is `null` when no
+client certificate was presented.
 
 ## Mock Server
 

@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -293,6 +294,10 @@ func cookieMap(r *http.Request) map[string]string {
 }
 
 // tlsInfo describes the TLS connection state. A nil state yields enabled:false.
+//
+// The client_cert key is always present so the response shape is stable: it
+// reports the presented client certificate under client-auth/mTLS, and is nil
+// (JSON null) when no peer certificate was presented (including a nil state).
 func tlsInfo(state *tls.ConnectionState) map[string]any {
 	if state == nil {
 		return map[string]any{
@@ -300,13 +305,62 @@ func tlsInfo(state *tls.ConnectionState) map[string]any {
 			"version":      "",
 			"cipher_suite": "",
 			"server_name":  "",
+			"client_cert":  nil,
 		}
 	}
+
+	// Use an untyped nil (not a typed nil map) so the field is a true JSON null
+	// and an absent cert compares == nil for callers inspecting the map. The
+	// non-nil first-element guard is defensive: real crypto/tls states never
+	// contain nil entries, but tlsInfo is exercised directly with synthetic
+	// states, and clientCertInfo dereferences the certificate.
+	var clientCert any
+	if len(state.PeerCertificates) > 0 && state.PeerCertificates[0] != nil {
+		clientCert = clientCertInfo(state.PeerCertificates[0])
+	}
+
 	return map[string]any{
 		"enabled":      true,
 		"version":      tlsVersionName(state.Version),
 		"cipher_suite": tls.CipherSuiteName(state.CipherSuite),
 		"server_name":  state.ServerName,
+		"client_cert":  clientCert,
+	}
+}
+
+// clientCertInfo summarizes a presented client certificate for the echo
+// response: subject and issuer distinguished-name fields (CN and O), serial,
+// validity window, and subject-alternative names (DNS and IP).
+//
+// Validity timestamps use time.RFC3339 (second precision), which is the natural
+// granularity for certificate NotBefore/NotAfter; the echo response's timing
+// section uses RFC3339Nano because that data is sub-second.
+func clientCertInfo(cert *x509.Certificate) map[string]any {
+	ipAddrs := make([]string, 0, len(cert.IPAddresses))
+	for _, ip := range cert.IPAddresses {
+		ipAddrs = append(ipAddrs, ip.String())
+	}
+
+	// Build dns_names the same way as ip_addresses so an absent SAN list
+	// serializes to [] (not null), keeping the two sibling list fields a
+	// consistent JSON shape.
+	dnsNames := make([]string, 0, len(cert.DNSNames))
+	dnsNames = append(dnsNames, cert.DNSNames...)
+
+	return map[string]any{
+		"subject": map[string]any{
+			"cn": cert.Subject.CommonName,
+			"o":  cert.Subject.Organization,
+		},
+		"issuer": map[string]any{
+			"cn": cert.Issuer.CommonName,
+			"o":  cert.Issuer.Organization,
+		},
+		"serial":       cert.SerialNumber.String(),
+		"not_before":   cert.NotBefore.Format(time.RFC3339),
+		"not_after":    cert.NotAfter.Format(time.RFC3339),
+		"dns_names":    dnsNames,
+		"ip_addresses": ipAddrs,
 	}
 }
 
