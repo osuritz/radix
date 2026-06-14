@@ -116,12 +116,20 @@ routes:
   # content. Arms are evaluated top to bottom; the FIRST arm whose every `match`
   # entry is satisfied wins. Match keys are dotted and prefixed with body.,
   # query., or headers.; a value of "*" means "present with any non-empty value"
-  # and any other value is an exact match. body.<field> resolves a TOP-LEVEL
-  # field of the parsed JSON object (or a form-urlencoded value); nested paths
-  # (body.a.b) are not supported. The selected arm's body is templated as usual.
+  # and any other value is an exact match. body.<field> resolves a TOP-LEVEL,
+  # SCALAR field of the parsed JSON object (or a form-urlencoded value); nested
+  # paths (body.a.b) and object/array values are not meaningful match targets.
+  # JSON numbers match their exact text (1000000, not 1e+06), booleans match
+  # "true"/"false", and JSON null / "" both equal an exact "" (and are absent to
+  # a "*" wildcard). The selected arm's body is templated as usual, reading the
+  # same parsed body the match did.
+  #
+  # Every non-`default` arm must carry at least one `match` rule; use
+  # `default: true` for an unconditional last arm.
   #
   # Precedence when serving: winning arm > `default: true` arm > the route's
-  # top-level `response` (if any) > 404.
+  # top-level `response` (only if one was explicitly provided) > 404. A route
+  # with no conditions and an absent/empty response serves 200 with an empty body.
   - path: /api/auth/login
     method: POST
     conditions:

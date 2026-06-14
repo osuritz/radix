@@ -15,10 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `default: true` arm always matches). Match keys are dotted and prefixed with
   `body.` (top-level JSON field or form value), `query.`, or `headers.`; a value
   of `"*"` means "present with any non-empty value", any other value is an exact
-  match. Precedence when serving: winning arm → default arm → the route's
-  top-level `response` (fallback) → `404`. Each arm's body template (inline or
-  `file:`) is compiled at load and `file:` arms keep the same traversal guard;
-  the request body is parsed once and shared by matching and templating.
+  match. JSON numbers match their exact source text (e.g. `{"id":1000000}`
+  matches `body.id: "1000000"`, not `1e+06`), booleans match `"true"`/`"false"`,
+  and JSON `null`/`""` both compare equal to an exact `""` (and are absent to a
+  `"*"` wildcard). Only scalar top-level body fields are meaningful match targets.
+  Precedence when serving: winning arm → default arm → the route's top-level
+  `response` **only when explicitly provided** → `404`. A route with no
+  conditions always has an effective response — an absent or empty `response: {}`
+  serves `200` empty (path-only routes are valid). A non-`default` arm must have
+  at least one match rule. Each arm's body template (inline or `file:`) keeps the
+  same traversal guard; the request body is parsed once (numbers as exact text,
+  form fields as first-value strings) and shared by matching and templating, so
+  `{{.body.field}}` renders exactly what a condition matches. **Inline** `body`
+  templates are validated at load; `file:` bodies are read and templated **per
+  request** (so edits to the data file are reflected live), and a missing file or
+  malformed file template surfaces as a `500` at request time.
 - **`proxy.auth.provider` selection** — the proxy now honors `proxy.auth.provider`
   to choose among multiple compiled-in `HeaderProvider`s by name. A configured
   name that isn't registered is a hard startup error (rather than silently

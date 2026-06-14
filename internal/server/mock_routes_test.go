@@ -812,6 +812,158 @@ routes:
 	}
 }
 
+func TestRoutes_EmptyResponseServes200(t *testing.T) {
+	// Back-compat: `response: {}` (present but empty) serves 200 with an empty
+	// body, matching the pre-conditions behavior.
+	const src = `
+routes:
+  - path: /empty
+    response: {}
+`
+	rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/empty", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "" {
+		t.Errorf("body = %q, want empty", got)
+	}
+}
+
+func TestRoutes_PathOnlyServes200(t *testing.T) {
+	// Back-compat: a path-only route (no response, no conditions) is valid and
+	// serves 200 with an empty body (NOT a load error).
+	const src = `
+routes:
+  - path: /bare
+    method: GET
+`
+	rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/bare", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "" {
+		t.Errorf("body = %q, want empty", got)
+	}
+}
+
+func TestRoutes_ConditionNumericBodyMatch(t *testing.T) {
+	// A JSON number must match its exact source text (no float64 "1e+06"), in
+	// both condition matching and {{.body.field}} templating.
+	const src = `
+routes:
+  - path: /num
+    method: POST
+    conditions:
+      - match: { body.id: "1000000" }
+        response: { status: 200, body: 'id={{.body.id}}' }
+      - default: true
+        response: { status: 400, body: "no" }
+`
+	rec := doRouted(t, src, false, jsonPost("/num", `{"id":1000000}`))
+	if rec.Code != http.StatusOK || rec.Body.String() != "id=1000000" {
+		t.Errorf("status=%d body=%q, want 200 id=1000000 (numeric match + exact templating)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionSmallIntBodyMatch(t *testing.T) {
+	// A small integer still matches its plain decimal text.
+	const src = `
+routes:
+  - path: /n
+    method: POST
+    conditions:
+      - match: { body.n: "7" }
+        response: { status: 200, body: ok }
+      - default: true
+        response: { status: 400, body: no }
+`
+	rec := doRouted(t, src, false, jsonPost("/n", `{"n":7}`))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Errorf("status=%d body=%q, want 200 ok (small-int match)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionBooleanBodyMatch(t *testing.T) {
+	// A JSON boolean stringifies to "true"/"false" for matching.
+	const src = `
+routes:
+  - path: /b
+    method: POST
+    conditions:
+      - match: { body.active: "true" }
+        response: { status: 200, body: 'active={{.body.active}}' }
+      - default: true
+        response: { status: 400, body: "no" }
+`
+	rec := doRouted(t, src, false, jsonPost("/b", `{"active":true}`))
+	if rec.Code != http.StatusOK || rec.Body.String() != "active=true" {
+		t.Errorf("status=%d body=%q, want 200 active=true (boolean match)", rec.Code, rec.Body.String())
+	}
+	recFalse := doRouted(t, src, false, jsonPost("/b", `{"active":false}`))
+	if recFalse.Code != http.StatusBadRequest {
+		t.Errorf("active=false: status=%d, want 400 (only true matches)", recFalse.Code)
+	}
+}
+
+func TestRoutes_FormBodyTemplatingAndMatchConsistent(t *testing.T) {
+	// A form POST: {{.body.username}} renders "admin" (not "[admin]") AND
+	// body.username: admin matches — templating and matching read the same value.
+	const src = `
+routes:
+  - path: /form
+    method: POST
+    conditions:
+      - match: { body.username: admin }
+        response: { status: 200, body: 'hello {{.body.username}}' }
+      - default: true
+        response: { status: 401, body: "no" }
+`
+	req := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("username=admin&password=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := doRouted(t, src, false, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "hello admin" {
+		t.Errorf("status=%d body=%q, want 200 hello admin (form value, not [admin])", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionNullVsEmptyExactMatch(t *testing.T) {
+	// JSON null and "" both compare equal to an exact empty-string match, and a
+	// wildcard "*" treats both as absent/empty. Locked in intentionally.
+	const exactEmpty = `
+routes:
+  - path: /n
+    method: POST
+    conditions:
+      - match: { body.v: "" }
+        response: { status: 200, body: "empty-match" }
+      - default: true
+        response: { status: 400, body: "no" }
+`
+	for _, body := range []string{`{"v":null}`, `{"v":""}`} {
+		rec := doRouted(t, exactEmpty, false, jsonPost("/n", body))
+		if rec.Code != http.StatusOK || rec.Body.String() != "empty-match" {
+			t.Errorf("body %s: status=%d resp=%q, want 200 empty-match (null/\"\" == exact \"\")", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	const wildcard = `
+routes:
+  - path: /w
+    method: POST
+    conditions:
+      - match: { body.v: "*" }
+        response: { status: 200, body: "present" }
+      - default: true
+        response: { status: 400, body: "absent" }
+`
+	for _, body := range []string{`{"v":null}`, `{"v":""}`} {
+		rec := doRouted(t, wildcard, false, jsonPost("/w", body))
+		if rec.Code != http.StatusBadRequest || rec.Body.String() != "absent" {
+			t.Errorf("body %s: status=%d resp=%q, want 400 absent (null/\"\" miss wildcard)", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestLoadRoutes_Errors(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {
@@ -879,13 +1031,13 @@ func TestLoadRoutes_Errors(t *testing.T) {
 			wantSub: "invalid match key",
 		},
 		{
-			name: "route with neither conditions nor response",
+			name: "non-default arm with empty match",
 			write: func() string {
-				p := filepath.Join(dir, "empty.yml")
-				_ = os.WriteFile(p, []byte("routes:\n  - path: /nothing\n    method: GET\n"), 0o600)
+				p := filepath.Join(dir, "emptymatch.yml")
+				_ = os.WriteFile(p, []byte("routes:\n  - path: /c\n    conditions:\n      - response: { status: 200, body: oops }\n"), 0o600)
 				return p
 			},
-			wantSub: "no response and no conditions",
+			wantSub: "no match rules",
 		},
 	}
 

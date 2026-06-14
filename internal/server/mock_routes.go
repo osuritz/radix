@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -93,14 +95,21 @@ type FallbackConfig struct {
 //
 // A route may carry Conditions (request-content-driven response selection), a
 // plain Response, or both (the plain Response then acts as the fallback when no
-// condition arm matches). A route with neither is a load-time error.
+// condition arm matches). Response is a pointer so an absent `response:` (nil)
+// is distinguishable from an explicit empty `response: {}`:
+//   - A route with no conditions always has an effective response; an absent or
+//     empty top-level response defaults to 200 with an empty body (preserving the
+//     pre-conditions behavior where a path-only route served 200 empty).
+//   - A route with conditions uses the top-level response as a no-match fallback
+//     ONLY when one was explicitly provided (non-nil); otherwise a no-match is a
+//     404.
 type RouteDefYAML struct {
 	Path        string          `yaml:"path"`
 	Method      string          `yaml:"method"`
 	Methods     []string        `yaml:"methods"`
 	Delay       yamlDuration    `yaml:"delay"`
 	DelayJitter yamlDuration    `yaml:"delay_jitter"`
-	Response    ResponseYAML    `yaml:"response"`
+	Response    *ResponseYAML   `yaml:"response"`
 	Conditions  []ConditionYAML `yaml:"conditions"`
 }
 
@@ -226,9 +235,12 @@ type compiledRoute struct {
 	re       *regexp.Regexp // routeRegex
 	globBase string         // routeGlob: prefix before the trailing "/*"
 
-	// resp is the route's top-level response. When hasResp is false the route
-	// has no plain response and relies entirely on its conditions; resp then
-	// serves only as documentation of "no fallback".
+	// resp is the route's effective top-level response and hasResp reports
+	// whether it should be served. For a conditions route, hasResp is true only
+	// when an explicit top-level `response:` was provided, and resp is then the
+	// no-match fallback; when hasResp is false a no-match request is a 404. For a
+	// route with no conditions hasResp is always true (an absent/empty response
+	// is normalized to an empty 200).
 	resp    compiledResponse
 	hasResp bool
 
@@ -373,8 +385,13 @@ func validateProxyTarget(target string) error {
 }
 
 // compileRoute turns a single YAML route definition into its request-time form,
-// classifying its path and parsing its response(s). A route must define a plain
-// response, a conditions block, or both; one defining neither is a load error.
+// classifying its path and parsing its response(s).
+//
+// Response presence (whether an explicit top-level `response:` was provided) is
+// tracked in compiledRoute.hasResp and governs no-match behavior for conditional
+// routes. A route with no conditions always gets an effective response: an absent
+// or empty top-level response defaults to 200 with an empty body (back-compat
+// with the pre-conditions behavior where `- path: /x` served 200 empty).
 func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 	path := strings.TrimSpace(rd.Path)
 	if path == "" {
@@ -413,12 +430,12 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		cr.kind = routeExact
 	}
 
-	// A route needs at least one source of a response. responseIsSet treats a
-	// response with any status/headers/body/file as present; this matches the
-	// prior behavior where a bare `response: {}` still produced a 200.
-	cr.hasResp = responseIsSet(rd.Response)
+	// hasResp records whether an explicit top-level `response:` was provided
+	// (pointer non-nil). It governs the no-match fallback for conditional routes:
+	// only an explicit response is used as a fallback; absent → 404.
+	cr.hasResp = rd.Response != nil
 	if cr.hasResp {
-		resp, err := compileResponse(rd.Response)
+		resp, err := compileResponse(*rd.Response)
 		if err != nil {
 			return compiledRoute{}, err
 		}
@@ -431,19 +448,17 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 	}
 	cr.conditions = conds
 
-	if !cr.hasResp && len(cr.conditions) == 0 {
-		return compiledRoute{}, errors.New("route has no response and no conditions")
+	// A route with no conditions always has an effective response. When none was
+	// provided (nil pointer), default to an empty 200 — this restores the
+	// pre-conditions behavior where a path-only route (`- path: /x`) served 200
+	// with an empty body. `response: {}` lands here too via compileResponse's
+	// status default.
+	if len(cr.conditions) == 0 && !cr.hasResp {
+		cr.resp = compiledResponse{status: http.StatusOK}
+		cr.hasResp = true
 	}
 
 	return cr, nil
-}
-
-// responseIsSet reports whether a ResponseYAML carries any meaningful content
-// (a non-zero status, headers, an inline body, or a file). An entirely empty
-// response means the route did not specify one.
-func responseIsSet(resp ResponseYAML) bool {
-	return resp.Status != 0 || len(resp.Headers) > 0 ||
-		resp.Body != "" || strings.TrimSpace(resp.File) != ""
 }
 
 // compileResponse parses a ResponseYAML into its request-time form: status
@@ -491,6 +506,12 @@ func compileConditions(conds []ConditionYAML) ([]compiledCondition, error) {
 			rules, rErr := compileMatchRules(c.Match)
 			if rErr != nil {
 				return nil, fmt.Errorf("condition #%d: %w", i+1, rErr)
+			}
+			// A non-default arm with no match rules would have matchAll([])
+			// return true and silently match everything (e.g. a `matches:`
+			// typo or an omitted match block). Reject it at load time.
+			if len(rules) == 0 {
+				return nil, fmt.Errorf("condition #%d has no match rules; use 'default: true' for an unconditional arm", i+1)
 			}
 			cc.rules = rules
 		}
@@ -779,9 +800,9 @@ func (mr *matchRule) matches(data map[string]any) bool {
 // resolveMatchValue extracts the string value addressed by a match rule from
 // the shared template data. For body keys it resolves a top-level field of the
 // parsed JSON object or a form-urlencoded value (first value); nested paths are
-// not supported. Query and header keys resolve the first value (header names
-// are canonical-cased, matching buildTemplateData). ok is false when the
-// addressed key is absent.
+// not supported, and only scalar fields are useful match targets. Query and
+// header keys resolve the first value (header names are canonical-cased,
+// matching buildTemplateData). ok is false when the addressed key is absent.
 func resolveMatchValue(kind matchKind, key string, data map[string]any) (string, bool) {
 	switch kind {
 	case matchBody:
@@ -796,8 +817,11 @@ func resolveMatchValue(kind matchKind, key string, data map[string]any) (string,
 }
 
 // resolveBodyField resolves a top-level field of the parsed request body. The
-// body is either a JSON object (map[string]any) whose values are stringified,
-// or a form-urlencoded map (map[string][]string) whose first value is used.
+// body is either a JSON object (map[string]any) whose values are stringified, or
+// a form-urlencoded map (map[string]string of first values). Only scalar
+// top-level fields are meaningful match targets: a field whose value is a nested
+// JSON object or array stringifies to a Go-rendered form that is not a useful
+// match target (matching only against scalars is intended).
 func resolveBodyField(body any, field string) (string, bool) {
 	switch b := body.(type) {
 	case map[string]any:
@@ -806,24 +830,36 @@ func resolveBodyField(body any, field string) (string, bool) {
 			return "", false
 		}
 		return stringifyJSONValue(v), true
-	case map[string][]string:
-		vs, ok := b[field]
-		if !ok || len(vs) == 0 {
+	case map[string]string:
+		v, ok := b[field]
+		if !ok {
 			return "", false
 		}
-		return vs[0], true
+		return v, true
 	default:
 		return "", false
 	}
 }
 
 // stringifyJSONValue renders a decoded JSON scalar as the string used for
-// condition matching. Strings pass through; numbers, booleans, and null are
-// formatted with fmt so that, e.g., matching body.active against "true" works.
+// condition matching. The body is decoded with json.Number (see
+// parseJSONBodyForRoutes), so numbers carry their exact source text and a body
+// like {"id":1000000} matches body.id: "1000000" (not float64's "1e+06").
+//
+// Scalars are handled as: strings pass through; json.Number renders its exact
+// text; a float64 fallback (should the body ever be decoded without UseNumber)
+// is formatted without an exponent; booleans render "true"/"false"; JSON null
+// renders "" (so null compares equal to an exact empty-string match, the same as
+// an explicit ""). Objects/arrays are not meaningful scalar match targets and
+// fall through to fmt's default rendering.
 func stringifyJSONValue(v any) string {
 	switch val := v.(type) {
 	case string:
 		return val
+	case json.Number:
+		return val.String()
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64)
 	case nil:
 		return ""
 	default:
@@ -938,9 +974,12 @@ func jitter(upper time.Duration) time.Duration {
 
 // buildTemplateData assembles the dot-accessible data context shared by both
 // condition matching and response templating: method, path, params, query,
-// headers, and the parsed request body (a JSON object, a form-urlencoded map,
-// or nil). The request body read is bounded by maxMockBodyBytes; an oversized
-// body returns errMockBodyTooLarge so the caller can respond with a 413.
+// headers, and the parsed request body (a JSON value with numbers as
+// json.Number, a form-urlencoded map[string]string of first values, or nil).
+// Because matching and templating read this single parsed body, {{.body.field}}
+// renders exactly the value a condition matches. The request body read is
+// bounded by maxMockBodyBytes; an oversized body returns errMockBodyTooLarge so
+// the caller can respond with a 413.
 func buildTemplateData(w http.ResponseWriter, r *http.Request, params map[string]string) (map[string]any, error) {
 	if params == nil {
 		params = map[string]string{}
@@ -985,13 +1024,58 @@ func buildTemplateData(w http.ResponseWriter, r *http.Request, params map[string
 
 // parseRequestBody decodes a request body for the template/condition data
 // context, returning a JSON value for JSON content, a form-urlencoded
-// map[string][]string for form content, or nil otherwise. JSON is tried first
-// so a request advertising JSON is never misread as a form.
+// map[string]string (first value per key) for form content, or nil otherwise.
+// JSON is tried first so a request advertising JSON is never misread as a form.
+//
+// JSON numbers are decoded as json.Number (via UseNumber) so a body like
+// {"id":1000000} stringifies to its exact source text ("1000000") rather than
+// float64's "1e+06"; this keeps condition matching and {{.body.field}}
+// templating consistent and exact. Form bodies collapse to first-value strings
+// so {{.body.username}} renders "admin" (not "[admin]") and matches the same
+// value condition matching reads.
 func parseRequestBody(raw []byte, contentType string) any {
-	if v := parseJSONBody(raw, contentType); v != nil {
+	if v := parseJSONBodyForRoutes(raw, contentType); v != nil {
 		return v
 	}
-	return parseFormBody(raw, contentType)
+	return parseFormBodyFirstValues(raw, contentType)
+}
+
+// parseJSONBodyForRoutes decodes a JSON body using a decoder with UseNumber so
+// numeric values become json.Number (exact source text) instead of float64. It
+// returns nil for non-JSON content or a parse failure.
+func parseJSONBodyForRoutes(raw []byte, contentType string) any {
+	if len(raw) == 0 || !strings.Contains(contentType, "json") {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil {
+		return nil
+	}
+	return parsed
+}
+
+// parseFormBodyFirstValues parses a form-urlencoded body into a
+// map[string]string of first values per key, or nil for non-form content or a
+// parse failure. Representing the form as first-value strings (rather than
+// url.Values) makes templating ({{.body.k}} -> "v") and condition matching
+// (body.k: v) read the identical value.
+func parseFormBodyFirstValues(raw []byte, contentType string) any {
+	if len(raw) == 0 || !strings.Contains(contentType, "form-urlencoded") {
+		return nil
+	}
+	values, err := url.ParseQuery(string(raw))
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for k, vs := range values {
+		if len(vs) > 0 {
+			out[k] = vs[0]
+		}
+	}
+	return out
 }
 
 // routeFuncMap returns the template helper functions available in response

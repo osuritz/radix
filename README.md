@@ -293,11 +293,22 @@ match the whole path (e.g. `regex:^/api/v[0-9]+/x$`).
 
 **Templating** uses idiomatic Go `text/template` syntax. Request data is
 dot-accessible: `{{.method}}`, `{{.path}}`, `{{.params.id}}`, `{{.query.q}}`,
-`{{.headers.Authorization}}`, `{{.body.field}}` (parsed JSON or form). Header
-names containing `-` need `index`, e.g. `{{index .headers "Content-Type"}}`.
-Generator functions: `{{uuid}}`, `{{now}}`, `{{timestamp}}`,
-`{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`, `{{base64 "s"}}`.
-A malformed template or render error yields a `500` (the server stays up).
+`{{.headers.Authorization}}`, `{{.body.field}}` (a **top-level** field of the
+parsed JSON object, or a form-urlencoded first value). JSON numbers keep their
+exact source text (so `{"id":1000000}` renders `1000000`, not `1e+06`), and a
+form field renders its single value (`admin`, not `[admin]`) — the same value
+condition matching reads. Header names containing `-` need `index`, e.g.
+`{{index .headers "Content-Type"}}`. Generator functions: `{{uuid}}`, `{{now}}`,
+`{{timestamp}}`, `{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`,
+`{{base64 "s"}}`.
+
+**Template validation timing.** An **inline** `body` template is parsed at load
+time, so a malformed inline template fails fast (the routes file is rejected). A
+`file:` body, by contrast, is read and templated **per request** — this is
+intentional so edits to the referenced data file are reflected live without a
+reload. A missing `file:` target or a malformed file template therefore surfaces
+as a `500` at request time (the server stays up); a render error on any template
+likewise yields a `500`.
 
 **Conditional responses** let a route pick its response by matching request
 content. Add a `conditions:` block of arms; the **first** arm whose every
@@ -321,14 +332,26 @@ routes:
 
 Match keys are dotted and must be prefixed with `body.` (a **top-level** field
 of the parsed JSON object or a form-urlencoded value — nested paths like
-`body.a.b` are not supported), `query.` (first query value), or `headers.`
-(canonical-cased, first header value). A value of `"*"` matches when the key is
-present with any non-empty value; any other value requires an exact match. The
-selected arm's body is templated exactly like a plain response. **Precedence
-when serving:** winning arm → `default: true` arm → the route's top-level
-`response` (if any) → `404`. A route must define a `response`, a `conditions`
-block, or both (the `response` then acts as the fallback); a route with neither
-is a load error. Malformed templates and bad match-key prefixes fail at load.
+`body.a.b` are not supported, and only **scalar** fields are useful match
+targets; a field whose value is a nested object/array is not a meaningful match
+target), `query.` (first query value), or `headers.` (canonical-cased, first
+header value). A value of `"*"` matches when the key is present with any
+non-empty value; any other value requires an exact match. JSON `null` and an
+empty string `""` both compare equal to an exact `""` match, and both are treated
+as absent/empty by the wildcard `"*"`. The selected arm's body is templated
+exactly like a plain response.
+
+**Precedence when serving:** winning arm → `default: true` arm → the route's
+top-level `response` (only if one was explicitly provided) → `404`. A route with
+**no** conditions always has an effective response: an absent or empty
+`response: {}` defaults to `200` with an empty body (so a path-only route like
+`- path: /x` is valid). A route **with** conditions falls back to its top-level
+`response` only when one was provided; otherwise a no-match request is a `404`.
+
+Each non-`default` arm must have at least one `match` rule (use `default: true`
+for an unconditional arm). Bad match-key prefixes, empty-match non-default arms,
+and malformed **inline** templates all fail at load; `file:` arm bodies follow
+the per-request validation described above.
 
 > Not yet supported (ignored gracefully if present): stateful `sequence`,
 > weighted `random`, `websocket`, and `sse`.
