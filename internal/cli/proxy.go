@@ -123,6 +123,10 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := validateMetricsConfig(); err != nil {
+		return err
+	}
+
 	// Validate target
 	if cfg.Proxy.Target == "" {
 		return fmt.Errorf("target URL is required (use positional arg or --target flag)")
@@ -155,11 +159,11 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	// Build handler chain using a mux
 	mux := http.NewServeMux()
 
-	// Set up metrics if enabled
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux.
 	var collector *metrics.Collector
 	if cfg.Metrics.Enabled {
 		collector = metrics.NewCollector("proxy", version.Version)
-		mux.Handle(cfg.Metrics.Path, collector.Handler(cfg.Metrics.Format))
 	}
 
 	mux.Handle("/", proxyHandler)
@@ -234,5 +238,15 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	srvCfg.Banner = fmt.Sprintf("Proxying to %s on %s://%s", cfg.Proxy.Target, scheme, addr)
 
 	srv := server.NewServer(srvCfg)
-	return srv.Start(context.Background())
+
+	// Build the loopback admin server (metrics + /healthz) sharing the collector.
+	admin, err := buildAdminServer("proxy", collector)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	return runServers(ctx, srv, admin)
 }

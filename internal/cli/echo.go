@@ -127,6 +127,10 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid --status %d: must be between 100 and 599", n)
 	}
 
+	if err := validateMetricsConfig(); err != nil {
+		return err
+	}
+
 	// Build echo handler.
 	echoHandler := server.NewEchoHandler(server.EchoConfig{
 		Status:         cfg.Echo.Status,
@@ -147,11 +151,11 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 	// Build handler chain using a mux.
 	mux := http.NewServeMux()
 
-	// Set up metrics if enabled.
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux.
 	var collector *metrics.Collector
 	if cfg.Metrics.Enabled {
 		collector = metrics.NewCollector("echo", version.Version)
-		mux.Handle(cfg.Metrics.Path, collector.Handler(cfg.Metrics.Format))
 	}
 
 	// Health and readiness endpoints (not echoed).
@@ -211,7 +215,17 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 	srvCfg.Banner = fmt.Sprintf("Echoing requests on %s://%s", scheme, addr)
 
 	srv := server.NewServer(srvCfg)
-	return srv.Start(context.Background())
+
+	// Build the loopback admin server (metrics + /healthz) sharing the collector.
+	admin, err := buildAdminServer("echo", collector)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	return runServers(ctx, srv, admin)
 }
 
 // writeJSONStatus writes a small {"status": <status>} JSON body with a 200 status.

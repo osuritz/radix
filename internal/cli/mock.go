@@ -135,6 +135,9 @@ func runMock(cmd *cobra.Command, args []string) error {
 	if err := validateMockPrefix(cfg.Mock.Prefix); err != nil {
 		return err
 	}
+	if err := validateMetricsConfig(); err != nil {
+		return err
+	}
 
 	// Parse latency durations from their config string form.
 	latency, err := parseOptionalDuration("latency", cfg.Mock.Latency)
@@ -198,11 +201,11 @@ func runMock(cmd *cobra.Command, args []string) error {
 	// Build handler chain using a mux.
 	mux := http.NewServeMux()
 
-	// Set up metrics if enabled.
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux.
 	var collector *metrics.Collector
 	if cfg.Metrics.Enabled {
 		collector = metrics.NewCollector("mock", version.Version)
-		mux.Handle(cfg.Metrics.Path, collector.Handler(cfg.Metrics.Format))
 	}
 
 	// Health and readiness endpoints (kept at root regardless of --prefix).
@@ -262,7 +265,15 @@ func runMock(cmd *cobra.Command, args []string) error {
 	srvCfg.Banner = fmt.Sprintf("Mocking API on %s://%s", scheme, addr)
 
 	srv := server.NewServer(srvCfg)
-	return srv.Start(ctx)
+
+	// Build the loopback admin server (metrics + /healthz) sharing the collector.
+	// It joins the same ctx that drives graceful shutdown and the routes watcher.
+	admin, err := buildAdminServer("mock", collector)
+	if err != nil {
+		return err
+	}
+
+	return runServers(ctx, srv, admin)
 }
 
 // resolveRoutesArg reconciles the positional config-file argument with the

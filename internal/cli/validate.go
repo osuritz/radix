@@ -82,49 +82,25 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	// Validate file paths if TLS is enabled
 	warnings := []string{}
 
-	if loadedCfg.TLS.Enabled {
-		if loadedCfg.TLS.Cert == "" {
-			return fmt.Errorf("✗ TLS enabled but cert file not specified")
-		}
-		if loadedCfg.TLS.Key == "" {
-			return fmt.Errorf("✗ TLS enabled but key file not specified")
-		}
-
-		// Check cert file
-		if err := validatePath(loadedCfg.TLS.Cert, "cert.pem"); err != nil {
-			return fmt.Errorf("✗ Certificate file: %w", err)
-		}
-
-		// Check key file
-		if err := validatePath(loadedCfg.TLS.Key, "key.pem"); err != nil {
-			return fmt.Errorf("✗ Key file: %w", err)
-		}
-
-		// Check CA file if specified
-		if loadedCfg.TLS.CA != "" {
-			if err := validatePath(loadedCfg.TLS.CA, "ca.pem"); err != nil {
-				warnings = append(warnings, fmt.Sprintf("CA file not found: %s", loadedCfg.TLS.CA))
-			}
-		}
-
-		fmt.Fprintln(cmd.OutOrStdout(), "✓ TLS certificates: OK")
-
-		// Check TLS version
-		if loadedCfg.TLS.MinVersion != "1.2" && loadedCfg.TLS.MinVersion != "1.3" {
-			return fmt.Errorf("✗ Invalid TLS min_version: %s (must be '1.2' or '1.3')", loadedCfg.TLS.MinVersion)
-		}
-
-		// Warn if using TLS 1.2
-		if loadedCfg.TLS.MinVersion == "1.2" {
-			warnings = append(warnings, "Consider setting tls.min_version to '1.3' for better security")
-		}
+	tlsWarnings, err := validateLoadedTLS(cmd, loadedCfg)
+	if err != nil {
+		return err
 	}
+	warnings = append(warnings, tlsWarnings...)
 
 	// Validate port range
 	if loadedCfg.Port < 1 || loadedCfg.Port > 65535 {
 		return fmt.Errorf("✗ Invalid port: %d (must be 1-65535)", loadedCfg.Port)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", loadedCfg.Port)
+
+	// Validate the metrics/admin port (in range and not colliding with the app
+	// port). This is the same check the server commands run at startup, so a bad
+	// config file is caught here instead of only failing at runtime with a
+	// confusing bind error.
+	if err := config.ValidateMetrics(loadedCfg); err != nil {
+		return fmt.Errorf("✗ Metrics configuration: %w", err)
+	}
 
 	// Validate serve TLS-coupling rules (HSTS/redirect require TLS, redirect
 	// port must differ from the main port, non-negative HSTS max-age). This is
@@ -164,6 +140,56 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Configuration is valid: %s\n", absPath)
 	return nil
+}
+
+// validateLoadedTLS checks the TLS-coupled file paths and version for a loaded
+// config when TLS is enabled. It returns any non-fatal warnings (CA-file
+// missing, TLS 1.2 advisory) and a fatal error for misconfiguration. Extracted
+// from runValidate to keep that function's cyclomatic complexity in check.
+func validateLoadedTLS(cmd *cobra.Command, loadedCfg *config.Config) ([]string, error) {
+	if !loadedCfg.TLS.Enabled {
+		return nil, nil
+	}
+
+	var warnings []string
+
+	if loadedCfg.TLS.Cert == "" {
+		return nil, fmt.Errorf("✗ TLS enabled but cert file not specified")
+	}
+	if loadedCfg.TLS.Key == "" {
+		return nil, fmt.Errorf("✗ TLS enabled but key file not specified")
+	}
+
+	// Check cert file
+	if err := validatePath(loadedCfg.TLS.Cert, "cert.pem"); err != nil {
+		return nil, fmt.Errorf("✗ Certificate file: %w", err)
+	}
+
+	// Check key file
+	if err := validatePath(loadedCfg.TLS.Key, "key.pem"); err != nil {
+		return nil, fmt.Errorf("✗ Key file: %w", err)
+	}
+
+	// Check CA file if specified
+	if loadedCfg.TLS.CA != "" {
+		if err := validatePath(loadedCfg.TLS.CA, "ca.pem"); err != nil {
+			warnings = append(warnings, fmt.Sprintf("CA file not found: %s", loadedCfg.TLS.CA))
+		}
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "✓ TLS certificates: OK")
+
+	// Check TLS version
+	if loadedCfg.TLS.MinVersion != "1.2" && loadedCfg.TLS.MinVersion != "1.3" {
+		return nil, fmt.Errorf("✗ Invalid TLS min_version: %s (must be '1.2' or '1.3')", loadedCfg.TLS.MinVersion)
+	}
+
+	// Warn if using TLS 1.2
+	if loadedCfg.TLS.MinVersion == "1.2" {
+		warnings = append(warnings, "Consider setting tls.min_version to '1.3' for better security")
+	}
+
+	return warnings, nil
 }
 
 // validatePath checks if a file path exists and is readable

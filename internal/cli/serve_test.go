@@ -43,7 +43,7 @@ func waitForServer(addr string, timeout time.Duration) bool {
 	return false
 }
 
-func TestRunServeServers_RedirectsPlainHTTP(t *testing.T) {
+func TestRunServers_RedirectsPlainHTTP(t *testing.T) {
 	mainPort := freePort(t)
 	redirectPort := freePort(t)
 
@@ -62,7 +62,7 @@ func TestRunServeServers_RedirectsPlainHTTP(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runServeServers(ctx, mainSrv, redirectSrv) }()
+	go func() { done <- runServers(ctx, mainSrv, nil, redirectSrv) }()
 
 	redirectAddr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", redirectPort))
 	if !waitForServer(redirectAddr, 5*time.Second) {
@@ -112,14 +112,14 @@ func TestRunServeServers_RedirectsPlainHTTP(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("runServeServers returned error on clean shutdown: %v", err)
+			t.Fatalf("runServers returned error on clean shutdown: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("runServeServers did not return after context cancel")
+		t.Fatal("runServers did not return after context cancel")
 	}
 }
 
-func TestRunServeServers_RedirectBindFailureTearsDownMain(t *testing.T) {
+func TestRunServers_RedirectBindFailureTearsDownMain(t *testing.T) {
 	mainPort := freePort(t)
 
 	// Occupy a port so the redirect server's bind fails.
@@ -147,7 +147,7 @@ func TestRunServeServers_RedirectBindFailureTearsDownMain(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runServeServers(ctx, mainSrv, redirectSrv) }()
+	go func() { done <- runServers(ctx, mainSrv, nil, redirectSrv) }()
 
 	select {
 	case err := <-done:
@@ -155,7 +155,7 @@ func TestRunServeServers_RedirectBindFailureTearsDownMain(t *testing.T) {
 			t.Fatal("expected error from redirect bind failure, got nil")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("runServeServers did not return after redirect bind failure (main not torn down)")
+		t.Fatal("runServers did not return after redirect bind failure (main not torn down)")
 	}
 }
 

@@ -404,7 +404,7 @@ the per-request validation described above.
 | `--port` | `8080` | Port to listen on |
 | `--tls` | `false` | Serve the mock over HTTPS |
 
-> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags. A file value of `cors: false` or `fail_rate: 0` is honored as written (an explicit zero/false is distinct from an omitted field).
+> Note: `/_health` and `/_ready` stay at the root regardless of `--prefix` (`/_metrics` now lives on the admin port — see [Metrics & Health](#metrics--health)). Routes-file `settings` are overridden by explicitly-set CLI flags. A file value of `cors: false` or `fail_rate: 0` is honored as written (an explicit zero/false is distinct from an omitted field).
 
 ## Logging
 
@@ -448,6 +448,43 @@ Color for the `dev` format is decided once at startup, in this precedence
    true `isatty`; character devices such as `/dev/null` read as a TTY, so use the
    overrides above for those edge cases.)
 5. otherwise → color **on**.
+
+## Metrics & Health
+
+Every server command (`serve`, `proxy`, `echo`, `mock`) exposes request-oriented
+metrics and a liveness endpoint on a **dedicated admin port** (default `9090`),
+kept off the application listener. The admin server always binds **loopback
+(`127.0.0.1`)** — even when the app binds `0.0.0.0` — so telemetry and health are
+not broadly exposed.
+
+> **Behavior change (v0.4.0 → next):** the application port **no longer serves
+> `/_metrics`**. Metrics moved to the admin port. Point scrapers and health
+> checks at `127.0.0.1:9090` (or your `--metrics-port`) instead of the app port.
+
+```bash
+radix serve                          # app on :8080, admin on 127.0.0.1:9090
+curl http://127.0.0.1:9090/_metrics  # JSON metrics snapshot
+curl http://127.0.0.1:9090/healthz   # {"status":"ok","uptime":"...","version":"..."}
+
+radix proxy http://localhost:3000 --metrics-port 9091   # custom admin port
+radix mock --metrics-format prometheus                  # Prometheus exposition
+radix echo --metrics=false                              # no admin server at all
+```
+
+- **`/_metrics`** (path configurable via `--metrics-path` / `metrics.path`) returns
+  request counts, status classes, a latency histogram, bandwidth, and methods —
+  in JSON (default) or Prometheus text, selected by `--metrics-format` /
+  `metrics.format`. CPU/memory/process/runtime metrics are intentionally excluded.
+- **`/healthz`** returns `200` with `{"status":"ok","uptime":"<duration>","version":"<version>"}`
+  (liveness only).
+- `--metrics-port` / `metrics.port` set the admin port (default `9090`); it must
+  differ from the app port (validated at startup and by `radix validate`).
+- `--metrics=false` / `metrics.enabled: false` starts no admin server.
+
+The admin server shuts down gracefully alongside the main server on `SIGINT` /
+`SIGTERM`. (Note: `echo` and `mock` still serve their own simple `/_health` and
+`/_ready` JSON endpoints on the app port for backward compatibility; `/healthz`
+on the admin port is the liveness endpoint going forward.)
 
 ## TLS Certificates
 
