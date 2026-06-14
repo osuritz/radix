@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - TLS/HTTPS listener support
   - Metrics integration
   - Graceful shutdown
+- `radix echo` command for echoing HTTP requests back as JSON
+  - JSON description of each request: method, URL, path, query, headers, cookies, body, client/server info, TLS state, and timing
+  - Body parsing for JSON and form-urlencoded content (with `body_raw`/`body_size` always included)
+  - Configurable default status (`--status`) and response delay with jitter (`--delay`, `--delay-jitter`)
+  - Literal response body override (`--body`) and custom `--content-type` / `--header`
+  - Toggle echoed sections (`--echo-body`, `--echo-headers`, `--echo-query`)
+  - Request body size limit returning 413 (`--body-limit`) and pretty-printing (`--pretty`)
+  - Path-based status (`--status-from-path`, e.g. `/404`, `/status/500`) and delay (`--delay-from-path`, e.g. `/delay/2`, `/delay/500ms`, capped at 10s)
+  - `/_health` and `/_ready` endpoints, CORS support (`--cors`)
+  - TLS/HTTPS listener support, metrics integration, and graceful shutdown
 - `radix serve` command for static file serving
   - SPA mode (--spa) for single page applications
   - CORS headers (--cors)

@@ -63,10 +63,24 @@ proxy:
 
 # Echo command configuration
 echo:
-  delay: 0
+  # Response control
   status: 200
-  body: ""
-  headers: []
+  delay: 0
+  delay_jitter: 0          # random jitter added to delay (e.g. 200ms)
+  body: ""                 # non-empty returns this literal body instead of echo JSON
+  content_type: application/json
+  headers: []              # extra response headers, e.g. ["X-Echo-Server: Radix"]
+  # Echo behavior — which request sections to include in the response
+  echo_body: true
+  echo_headers: true
+  echo_query: true
+  # Limits & formatting
+  body_limit: 1048576      # max request body bytes (1MB); exceeding returns 413
+  pretty: true             # indent the echo JSON
+  # Path-based behavior
+  status_from_path: false  # /404 or /status/500 sets the response status
+  delay_from_path: false   # /delay/2 or /delay/500ms delays the response (capped at 10s)
+  cors: false              # add permissive CORS headers to responses
 
 # Mock command configuration
 mock:
