@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/osuritz/radix/internal/config"
@@ -100,6 +101,31 @@ func TestProxyCmd_TargetWithoutScheme(t *testing.T) {
 	err := runProxy(proxyCmd, nil)
 	if err == nil {
 		t.Error("expected error for target URL without http/https scheme")
+	}
+}
+
+func TestProxyCmd_UnknownAuthProviderFails(t *testing.T) {
+	oldCfg := cfg
+	defer func() { cfg = oldCfg }()
+
+	// A configured auth.provider that isn't registered must fail fast (before
+	// the server starts) rather than silently injecting no headers.
+	cfg = &config.Config{
+		Port: 0,
+		Host: "localhost",
+		Proxy: config.ProxyConfig{
+			Target: "http://localhost:3000",
+			Auth:   config.AuthConfig{Provider: "does-not-exist"},
+		},
+		Metrics: config.MetricsConfig{Enabled: false},
+	}
+
+	err := runProxy(proxyCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for unregistered auth provider")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error %q should name the missing provider", err)
 	}
 }
 

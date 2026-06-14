@@ -15,6 +15,22 @@ type HeaderProvider interface {
 
 If your fork registers exactly one provider, it's used automatically. No YAML config or CLI flags needed.
 
+If your fork registers **multiple** providers, select one by name with `proxy.auth.provider` in `radix.yml`:
+
+```yaml
+proxy:
+  auth:
+    provider: okta        # must match the name passed to RegisterHeaderProvider
+    config:               # provider-specific settings (see below)
+      audience: api.internal
+```
+
+A `provider` name that isn't registered is a hard error — `radix proxy` fails fast at startup rather than silently injecting no headers. With two or more providers compiled in and no `provider` set, none is auto-selected (the proxy falls back to the static `--header`/`proxy.headers` values, if any).
+
+### Provider-specific config (`auth.config`)
+
+`auth.config` is a free-form map for settings your provider needs (audience, scopes, endpoints, etc.). The built-in `HeaderProvider` interface does not consume it today, so it is **read by the provider itself**: a fork that needs these values reads `cfg.Proxy.Auth.Config` (e.g., in `main.go` before registering, or from its own config loader) and passes them into its provider constructor. Treat it as reserved plumbing for forks rather than a value the core interface injects for you.
+
 ## Step-by-Step Example: Bearer Token Provider
 
 This example creates a provider that injects a `Authorization: Bearer <token>` header, fetching the token from an internal credential library.

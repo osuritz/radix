@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`proxy.auth.provider` selection** — the proxy now honors `proxy.auth.provider`
+  to choose among multiple compiled-in `HeaderProvider`s by name. A configured
+  name that isn't registered is a hard startup error (rather than silently
+  injecting no headers). Auto-detection of a single provider and the static
+  `--header` fallback are unchanged.
+
+### Changed
+
+- `middleware.ResolveProvider` now returns `(HeaderProvider, error)`: an explicit
+  but unregistered provider name yields an error instead of a silent `nil`.
+  Empty-name auto-detection (single provider, static fallback, or none) is
+  unchanged and never errors.
+
 ## [0.2.0] - 2026-06-14
 
 This release completes the core command set. Radix now provides `serve`, `proxy`,
@@ -33,8 +48,8 @@ shutdown.
     backend CA/cert/key).
   - Pluggable auth header injection via the `HeaderProvider` interface: a
     single compiled-in provider is auto-detected and used, otherwise the static
-    `--header` values are injected (explicit `auth.provider` selection among
-    multiple providers is reserved for a future release).
+    `--header` values are injected. Explicit `auth.provider` selection among
+    multiple providers landed in a later change (see Unreleased).
 - **`radix echo`** — echoes each request back as JSON (method, URL, path, query,
   headers, cookies, body, client/server info, TLS state, timing).
   - JSON/form body parsing; configurable status (`--status`), delay with jitter
@@ -68,12 +83,12 @@ shutdown.
   server commands.
 - **Auth extensions** — `HeaderProvider` interface with `InjectHeaders`
   middleware, a `StaticProvider` for fixed headers, and a provider registry.
-  Today the `proxy` command auto-detects a single compiled-in provider (used
-  without any config) and otherwise falls back to injecting the static
+  The `proxy` command auto-detects a single compiled-in provider (used without
+  any config) and otherwise falls back to injecting the static
   `--header`/`proxy.headers` values; explicit `proxy.auth.provider` selection
-  among multiple registered providers is supported by the registry but not yet
-  wired into the command (reserved for a future release). Designed for corporate
-  forks that inject tokens (Okta, Azure AD, etc.) into proxied requests.
+  among multiple registered providers is supported by the registry (wired into
+  the command in a later change — see Unreleased). Designed for corporate forks
+  that inject tokens (Okta, Azure AD, etc.) into proxied requests.
 - **Middleware** — CORS and gzip compression middleware; HSTS security-headers
   middleware.
 - **`scripts/smoke.sh`** and a `make smoke` target — end-to-end smoke test that

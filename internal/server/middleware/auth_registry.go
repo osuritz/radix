@@ -1,6 +1,9 @@
 package middleware
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 var (
 	providersMu sync.RWMutex
@@ -23,30 +26,43 @@ func GetHeaderProvider(name string) HeaderProvider {
 }
 
 // ResolveProvider returns the provider to use based on config and registry state.
-// Resolution order:
-//  1. If config specifies a provider name, use that (nil if not found)
-//  2. If exactly one custom provider is registered, use it automatically
-//  3. Fall back to StaticProvider from proxy.headers config
-//  4. nil if no headers configured and no providers registered
-func ResolveProvider(configName string, staticHeaders []string) HeaderProvider {
+//
+// When configName is non-empty it selects an explicitly named provider:
+//   - registered → that provider, nil error.
+//   - not registered → nil and an error (the provider must be compiled in via
+//     RegisterHeaderProvider, typically from a fork's init()).
+//
+// When configName is empty, resolution falls back to auto-detection:
+//   - exactly one custom provider registered → that provider.
+//   - otherwise, if static headers are configured → a StaticProvider for them.
+//   - otherwise → (nil, nil), meaning no header injection.
+//
+// Auto-detection never errors: an ambiguous registry (two or more providers and
+// no explicit name) returns (nil, nil) rather than guessing.
+func ResolveProvider(configName string, staticHeaders []string) (HeaderProvider, error) {
 	providersMu.RLock()
 	defer providersMu.RUnlock()
 
 	if configName != "" {
-		return providers[configName]
+		p, ok := providers[configName]
+		if !ok {
+			return nil, fmt.Errorf("auth provider %q is not registered; "+
+				"it must be compiled in via RegisterHeaderProvider", configName)
+		}
+		return p, nil
 	}
 
 	if len(providers) == 1 {
 		for _, p := range providers {
-			return p
+			return p, nil
 		}
 	}
 
 	if len(staticHeaders) > 0 {
-		return NewStaticProvider(parseHeaders(staticHeaders))
+		return NewStaticProvider(parseHeaders(staticHeaders)), nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // resetProviders clears the registry (for testing only).
