@@ -268,8 +268,16 @@ func clientHost(remoteAddr string) string {
 // Format: host ident authuser date request status bytes
 // Example: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.0" 200 2326
 func formatCLF(r *http.Request, status, size int) string {
+	return formatCLFAt(time.Now(), r, status, size)
+}
+
+// formatCLFAt renders Common Log Format at the given timestamp. now is injected
+// so the formatter is deterministically testable; formatCLF calls it with
+// time.Now(). The annotation is intentionally not a parameter: CLF must stay
+// byte-identical regardless of any per-request log annotation.
+func formatCLFAt(now time.Time, r *http.Request, status, size int) string {
 	host := clientHost(r.RemoteAddr)
-	timestamp := time.Now().Format("02/Jan/2006:15:04:05 -0700")
+	timestamp := now.Format("02/Jan/2006:15:04:05 -0700")
 	requestLine := fmt.Sprintf("%s %s %s", r.Method, r.RequestURI, r.Proto)
 
 	// %q is intentionally NOT used here: the CLF output must stay byte-identical
@@ -289,8 +297,17 @@ func formatCLF(r *http.Request, status, size int) string {
 // Format: CLF + "referrer" "user-agent"
 // Example: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.0" 200 2326 "http://example.com" "Mozilla/5.0"
 func formatExtendedCLF(r *http.Request, status, size int) string {
+	return formatExtendedCLFAt(time.Now(), r, status, size)
+}
+
+// formatExtendedCLFAt renders Extended Common Log Format at the given
+// timestamp. now is injected so the formatter is deterministically testable;
+// formatExtendedCLF calls it with time.Now(). As with formatCLFAt, no
+// annotation is threaded in: Extended CLF must stay byte-identical regardless
+// of any per-request log annotation.
+func formatExtendedCLFAt(now time.Time, r *http.Request, status, size int) string {
 	host := clientHost(r.RemoteAddr)
-	timestamp := time.Now().Format("02/Jan/2006:15:04:05 -0700")
+	timestamp := now.Format("02/Jan/2006:15:04:05 -0700")
 	requestLine := fmt.Sprintf("%s %s %s", r.Method, r.RequestURI, r.Proto)
 
 	referrer := r.Header.Get("Referer")

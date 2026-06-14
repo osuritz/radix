@@ -247,6 +247,38 @@ func TestFileServer_AnnotationNilSafe(t *testing.T) {
 	}
 }
 
+// TestFileServer_FailedFallbackNoTarget verifies that when an SPA path misses
+// AND the configured index is itself missing, the request is NOT served the
+// fallback (so it does not 200) and the dev access log does NOT show
+// "→ fallback" — the annotation must only fire after the index actually opens.
+func TestFileServer_FailedFallbackNoTarget(t *testing.T) {
+	dir := t.TempDir() // deliberately empty: no index.html exists
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+		SPA:   true,
+	})
+
+	var buf bytes.Buffer
+	logged := devLog(t, &buf, handler)
+
+	// /about misses; SPA fallback is attempted but index.html is absent, so the
+	// fallback open fails -> the response is a 404, not a served fallback.
+	req := httptest.NewRequest(http.MethodGet, "/about", nil)
+	rec := httptest.NewRecorder()
+	logged.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Errorf("missing fallback index must not yield 200, got %d", rec.Code)
+	}
+	if out := buf.String(); strings.Contains(out, "→ fallback") {
+		t.Errorf("a failed fallback (missing index) must not log \"→ fallback\": %q", out)
+	}
+	if out := buf.String(); strings.Contains(out, "→") {
+		t.Errorf("a failed fallback must not emit any target column: %q", out)
+	}
+}
+
 func TestFileServer_DirectoryListing(t *testing.T) {
 	dir := setupTestDir(t)
 	handler := server.NewFileServer(server.FileServerConfig{

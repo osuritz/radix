@@ -25,9 +25,11 @@ type FileServerConfig struct {
 //
 // In SPA mode the handler annotates the access log with Target="fallback" on
 // exactly those requests that are served the index file because the requested
-// path did not exist; plain static-asset and real-file hits get no target. The
-// fallback decision is made deep inside http.FileServer (which does not thread
-// the request context to FileSystem.Open), so a fresh per-request
+// path did not exist — and only after the index file actually opens, so a miss
+// whose index is itself missing/unreadable (a real 404/error) is never
+// mislabelled as a fallback. Plain static-asset and real-file hits get no
+// target. The fallback decision is made deep inside http.FileServer (which does
+// not thread the request context to FileSystem.Open), so a fresh per-request
 // spaFileSystem is constructed to capture the annotation pointer — this keeps
 // the fallback signal exact (it mirrors the real Open branch) rather than
 // re-deriving it in the handler. Constructing the wrapper is cheap (it only
@@ -67,13 +69,21 @@ func (fs *spaFileSystem) Open(name string) (http.File, error) {
 	if err != nil {
 		if os.IsNotExist(err) && fs.spa && !isStaticAsset(name) {
 			// SPA fallback: serve the root index file for non-asset paths.
-			// Annotate the access log (nil-safe) so the dev format shows the
-			// fallback was taken for this request.
+			indexFile, indexErr := fs.root.Open("/" + fs.index)
+			if indexErr != nil {
+				// The index itself is missing/unreadable: this request still
+				// 404s (or errors), so it was NOT served the fallback. Do not
+				// annotate — labelling it "→ fallback" would mislabel the line.
+				return nil, indexErr
+			}
+			// Annotate the access log (nil-safe) only after the fallback index
+			// actually opened, so the dev format shows "→ fallback" exactly when
+			// the fallback was served.
 			if fs.annotation != nil {
 				fs.annotation.Kind = "fileserver"
 				fs.annotation.Target = "fallback"
 			}
-			return fs.root.Open("/" + fs.index)
+			return indexFile, nil
 		}
 		return nil, err
 	}

@@ -463,35 +463,80 @@ func TestLogging_NoAnnotationNoArrow(t *testing.T) {
 	}
 }
 
-// TestLogging_AnnotationDoesNotAffectCLF verifies the target annotation never
-// leaks into CLF or Extended CLF output, even when a handler sets it. CLF and
-// Extended CLF must stay byte-identical regardless of the annotation.
+// withTarget returns a copy of r whose context carries a *LogAnnotation with
+// the given target set (mirroring what a downstream handler would do). It is
+// used to prove that the presence of an annotation cannot perturb CLF/ECLF.
+func withTarget(r *http.Request, target string) *http.Request {
+	ctx, a := withLogAnnotation(r.Context())
+	a.Kind = "proxy"
+	a.Target = target
+	return r.WithContext(ctx)
+}
+
+// TestLogging_AnnotationDoesNotAffectCLF is the byte-identity guard for the
+// PR's critical invariant: CLF and Extended CLF must be byte-for-byte identical
+// whether or not a *LogAnnotation (with a target set) rides on the request
+// context. It asserts exact golden strings at a fixed timestamp — so it fails
+// if spacing, bytes, or the target leak into either format — and additionally
+// asserts that the with-target and without-target outputs are equal.
 func TestLogging_AnnotationDoesNotAffectCLF(t *testing.T) {
-	setTarget := func(w http.ResponseWriter, r *http.Request) {
-		if a := LogAnnotationFromContext(r.Context()); a != nil {
-			a.Kind = "proxy"
-			a.Target = "localhost:3000"
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+	const (
+		wantCLF  = "127.0.0.1 - - [14/Jun/2026:14:23:01 +0000] \"GET /api/users HTTP/1.1\" 200 2358\n"
+		wantECLF = "127.0.0.1 - - [14/Jun/2026:14:23:01 +0000] \"GET /api/users HTTP/1.1\" 200 2358 " +
+			"\"http://example.com/\" \"radix-test/1.0\"\n"
+	)
+
+	tests := []struct {
+		name   string
+		format LogFormat
+		want   string
+	}{
+		{name: "clf", format: LogFormatCLF, want: wantCLF},
+		{name: "extended_clf", format: LogFormatExtendedCLF, want: wantECLF},
 	}
 
-	for _, format := range []LogFormat{LogFormatCLF, LogFormatExtendedCLF} {
-		t.Run(string(format), func(t *testing.T) {
-			var buf bytes.Buffer
-			wrapped := Logging(LoggingConfig{Format: format, Output: &buf})(http.HandlerFunc(setTarget))
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		// Set referrer/user-agent so the Extended CLF golden is fully determined.
+		req.Header.Set("Referer", "http://example.com/")
+		req.Header.Set("User-Agent", "radix-test/1.0")
+		return req
+	}
 
-			req := httptest.NewRequest("GET", "/api/users", nil)
-			req.RemoteAddr = "127.0.0.1:54321"
-			wrapped.ServeHTTP(httptest.NewRecorder(), req)
+	format := func(f LogFormat, r *http.Request) string {
+		switch f {
+		case LogFormatCLF:
+			return formatCLFAt(fixedNow, r, 200, 2358)
+		case LogFormatExtendedCLF:
+			return formatExtendedCLFAt(fixedNow, r, 200, 2358)
+		default:
+			t.Fatalf("unexpected format %q", f)
+			return ""
+		}
+	}
 
-			out := buf.String()
-			if strings.Contains(out, "→") || strings.Contains(out, "localhost:3000") {
-				t.Errorf("%s output must not contain the target annotation: %q", format, out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Without any annotation on the context.
+			plain := format(tt.format, newReq())
+			if plain != tt.want {
+				t.Errorf("%s without annotation:\n got: %q\nwant: %q", tt.format, plain, tt.want)
 			}
-			// Sanity: the line is still a well-formed CLF request line.
-			if !strings.Contains(out, `"GET /api/users HTTP/1.1"`) {
-				t.Errorf("%s output not well-formed: %q", format, out)
+
+			// With a *LogAnnotation (target set) on the context: byte-identical.
+			annotated := format(tt.format, withTarget(newReq(), "localhost:3000"))
+			if annotated != tt.want {
+				t.Errorf("%s with annotation:\n got: %q\nwant: %q", tt.format, annotated, tt.want)
+			}
+			if annotated != plain {
+				t.Errorf("%s output differs with vs without annotation:\n with: %q\nwithout: %q",
+					tt.format, annotated, plain)
+			}
+
+			// Defense in depth: the target must never appear in the bytes.
+			if strings.Contains(annotated, "→") || strings.Contains(annotated, "localhost:3000") {
+				t.Errorf("%s output must not contain the target annotation: %q", tt.format, annotated)
 			}
 		})
 	}
