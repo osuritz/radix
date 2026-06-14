@@ -105,6 +105,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := config.ValidateServeTLS(cfg); err != nil {
 		return err
 	}
+	if err := validateMetricsConfig(); err != nil {
+		return err
+	}
 
 	// Resolve directory to absolute path
 	dir, err := filepath.Abs(cfg.Serve.Dir)
@@ -133,11 +136,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Build handler chain using a mux
 	mux := http.NewServeMux()
 
-	// Set up metrics if enabled
+	// Set up metrics if enabled. The collector is shared with the admin server
+	// (built below); the request-recording middleware stays on the app handler
+	// while the admin server exposes the same collector's snapshot. The
+	// /_metrics endpoint is no longer mounted on the app mux.
 	var collector *metrics.Collector
 	if cfg.Metrics.Enabled {
 		collector = metrics.NewCollector("serve", version.Version)
-		mux.Handle(cfg.Metrics.Path, collector.Handler(cfg.Metrics.Format))
 	}
 
 	// Wrap file handler with Cache-Control if configured
@@ -218,46 +223,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	// A shared, cancelable context ties the two servers together: when either
-	// stops (signal or error), the other is asked to shut down too.
+	// Build the loopback admin server (metrics + /healthz) sharing the same
+	// collector. Its listener is bound eagerly here so an admin-port conflict is
+	// reported before the main server starts.
+	admin, err := buildAdminServer("serve", collector)
+	if err != nil {
+		return err
+	}
+
+	// A shared, cancelable context ties the servers together: when any of them
+	// stops (signal or error), the others are asked to shut down too. The admin
+	// server is always torn down (see runServers), so a main-server bind failure
+	// cannot leak its listener.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	return runServeServers(ctx, srv, redirectSrv)
-}
-
-// runServeServers starts the main server and (if non-nil) the redirect server,
-// blocking until ctx is canceled or either server fails.
-//
-// A redirect-listener failure (e.g. its port is already in use) cancels the
-// shared context, tearing down the main server too, and is returned to the
-// caller (taking precedence only when the main server itself shut down cleanly).
-// Because Server.Start returns nil on a clean signal/context shutdown, a normal
-// SIGINT yields no spurious error. Waiting on the redirect goroutine's channel
-// also guarantees its graceful Shutdown has completed before this returns.
-func runServeServers(ctx context.Context, main, redirect *server.Server) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var redirectErrCh chan error
-	if redirect != nil {
-		redirectErrCh = make(chan error, 1)
-		go func() {
-			rerr := redirect.Start(ctx)
-			if rerr != nil {
-				cancel() // a redirect failure tears down the main server too
-			}
-			redirectErrCh <- rerr
-		}()
-	}
-
-	err := main.Start(ctx)
-	cancel()
-
-	if redirectErrCh != nil {
-		if rerr := <-redirectErrCh; rerr != nil && err == nil {
-			err = fmt.Errorf("http redirect listener: %w", rerr)
-		}
-	}
-	return err
+	return runServers(ctx, srv, admin, redirectSrv)
 }

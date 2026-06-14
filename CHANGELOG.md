@@ -32,6 +32,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RFC3339 behavior. All generators are stdlib-only (no faker/lorem dependency),
   and `{{seq}}` is concurrency-safe and private to each route. See the README
   template-function table and `examples/mock-routes.yml`.
+- **Dedicated admin port for metrics + `/healthz`** — every server command
+  (`serve`, `proxy`, `echo`, `mock`) now exposes request-oriented metrics and a
+  new `/healthz` liveness endpoint on a separate admin server (default port
+  `9090`, configurable via `--metrics-port` / `metrics.port`). The admin server
+  always binds loopback (`127.0.0.1`), even when the app binds `0.0.0.0`, so
+  telemetry and health are not broadly exposed. `/healthz` returns `200` with
+  `{"status":"ok","uptime":"<duration>","version":"<version>"}`. The metrics
+  endpoint honors `--metrics-format` (JSON or Prometheus). The admin and main
+  servers share one collector and shut down together on signal/context cancel;
+  the admin listener is bound eagerly and always released (never leaked) even if
+  the main server fails to start. `--metrics=false` starts no admin server.
+  Config validation (`radix validate` and each command at startup) rejects an
+  out-of-range `metrics.port`, a collision with the app port, and an invalid
+  `metrics.path` (empty, not starting with `/`, or colliding with the reserved
+  `/healthz` route) — the last preventing a startup panic from a duplicate mux
+  pattern.
+
+### Changed
+
+- **Metrics moved off the application port (behavior change).** The application
+  listener **no longer serves `/_metrics`**; it is served only on the admin port
+  (default `127.0.0.1:9090`). Point scrapers and health checks at the admin port
+  instead of the app port. `echo` and `mock` continue to serve their existing
+  `/_health` and `/_ready` JSON endpoints on the app port.
 
 ## [0.4.0] - 2026-06-14
 

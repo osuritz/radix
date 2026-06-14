@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -45,6 +46,10 @@ type MetricsConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Path    string `mapstructure:"path"`
 	Format  string `mapstructure:"format"` // "json" or "prometheus"
+	// Port is the dedicated admin port that serves the metrics endpoint and
+	// /healthz. The admin server always binds loopback (127.0.0.1) so telemetry
+	// and health are not broadly exposed, even when the app binds 0.0.0.0.
+	Port int `mapstructure:"port"`
 }
 
 // ServeConfig represents configuration for the serve command
@@ -163,6 +168,46 @@ func ValidateServeTLS(cfg *Config) error {
 	return nil
 }
 
+// HealthzPath is the path the admin server's liveness endpoint is always served
+// at. It is reserved: the configurable metrics path must not collide with it, or
+// the admin mux would panic on a duplicate pattern registration at startup. Both
+// config validation and the admin server reference this const so they agree.
+const HealthzPath = "/healthz"
+
+// ValidateMetrics checks the metrics/admin-server options. It is shared between
+// each server command's runtime checks and the offline `radix validate` path so
+// that a misconfigured file is rejected before it ever reaches the server (with
+// a clear message instead of a confusing bind error).
+//
+// Rules enforced (only when metrics are enabled — a disabled admin server binds
+// nothing, so its port is irrelevant):
+//   - metrics.port must be in the valid TCP range 1..65535
+//   - metrics.port must differ from the app port (they would otherwise collide,
+//     since both bind a TCP port on the same machine)
+//   - metrics.path must be non-empty, start with "/", and not equal the reserved
+//     HealthzPath (otherwise the admin mux panics on a duplicate/invalid pattern)
+func ValidateMetrics(cfg *Config) error {
+	if !cfg.Metrics.Enabled {
+		return nil
+	}
+	if cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535 {
+		return fmt.Errorf("metrics.port (%d) must be between 1 and 65535", cfg.Metrics.Port)
+	}
+	if cfg.Metrics.Port == cfg.Port {
+		return fmt.Errorf("metrics.port (%d) must differ from the app port (%d)", cfg.Metrics.Port, cfg.Port)
+	}
+	if cfg.Metrics.Path == "" {
+		return fmt.Errorf("metrics.path must not be empty (e.g. %q)", "/_metrics")
+	}
+	if !strings.HasPrefix(cfg.Metrics.Path, "/") {
+		return fmt.Errorf("metrics.path (%q) must start with %q", cfg.Metrics.Path, "/")
+	}
+	if cfg.Metrics.Path == HealthzPath {
+		return fmt.Errorf("metrics.path (%q) must not equal the reserved %q liveness path", cfg.Metrics.Path, HealthzPath)
+	}
+	return nil
+}
+
 // Load loads configuration from file, environment variables, and defaults
 func Load(cfgFile string) (*Config, error) {
 	v := viper.New()
@@ -225,6 +270,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.enabled", true)
 	v.SetDefault("metrics.path", "/_metrics")
 	v.SetDefault("metrics.format", "json")
+	v.SetDefault("metrics.port", 9090)
 
 	// Serve defaults
 	v.SetDefault("serve.dir", ".")

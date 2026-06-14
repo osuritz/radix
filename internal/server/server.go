@@ -24,7 +24,14 @@ const DefaultReadHeaderTimeout = 10 * time.Second
 // Config holds the configuration for creating a new Server.
 type Config struct {
 	// Addr is the address to listen on in "host:port" format (e.g. "localhost:8080").
+	// Ignored when Listener is set (the listener's own address is used instead).
 	Addr string
+
+	// Listener, when non-nil, is an already-bound listener the server serves on
+	// instead of binding Addr itself. This lets a caller (notably tests) bind an
+	// ephemeral "127.0.0.1:0" port and read the resolved address back via Addr(),
+	// avoiding a check-then-bind race. When nil, the server binds Addr itself.
+	Listener net.Listener
 
 	// Handler is the HTTP handler that serves requests.
 	Handler http.Handler
@@ -67,6 +74,7 @@ type Config struct {
 // commands (serve, proxy, echo, mock).
 type Server struct {
 	httpServer      *http.Server
+	listener        net.Listener
 	tlsConfig       *tls.Config
 	shutdownTimeout time.Duration
 	banner          string
@@ -104,6 +112,7 @@ func NewServer(cfg *Config) *Server {
 
 	return &Server{
 		httpServer:      srv,
+		listener:        cfg.Listener,
 		tlsConfig:       cfg.TLSConfig,
 		shutdownTimeout: shutdownTimeout,
 		banner:          cfg.Banner,
@@ -122,32 +131,43 @@ func NewServer(cfg *Config) *Server {
 // Start returns nil on clean shutdown (context canceled or signal received).
 // It returns an error if the server fails to start (e.g. port already in use)
 // or if graceful shutdown fails.
+//
+// Start is the sole signal owner: it installs the only SIGINT/SIGTERM handler in
+// the process and is reserved for the MAIN server. Subordinate servers (admin,
+// HTTP→HTTPS redirect) must use Serve, which is signal-free and shuts down purely
+// on context cancellation — otherwise multiple servers would race to handle the
+// same signal.
 func (s *Server) Start(ctx context.Context) error {
-	// Layer signal handling on top of the provided context.
+	// Layer signal handling on top of the provided context, then delegate to the
+	// signal-free Serve. When a signal arrives this cancels ctx, so Serve shuts
+	// the server down gracefully and returns nil.
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	return s.Serve(ctx)
+}
+
+// Serve begins listening for HTTP(S) requests and blocks until the provided
+// context is canceled, then performs a graceful shutdown. Unlike Start, it
+// installs NO signal handler: it is the form used by subordinate servers (e.g.
+// the HTTP→HTTPS redirect listener) that must shut down only when the shared
+// context is canceled, leaving the main server as the single SIGINT/SIGTERM
+// owner.
+//
+// Serve returns nil on clean shutdown (context canceled). It returns an error if
+// the server fails to start (e.g. port already in use) or if graceful shutdown
+// fails.
+func (s *Server) Serve(ctx context.Context) error {
 	// Start the server in a goroutine.
 	errCh := make(chan error, 1)
-
-	if s.tlsConfig != nil {
-		s.httpServer.TLSConfig = s.tlsConfig
-		go func() {
-			// Empty cert/key strings: certs are already in TLSConfig.
-			errCh <- s.httpServer.ListenAndServeTLS("", "")
-		}()
-	} else {
-		go func() {
-			errCh <- s.httpServer.ListenAndServe()
-		}()
-	}
+	go func() { errCh <- s.listenAndServe() }()
 
 	// Print startup banner after kicking off the listener.
 	if s.banner != "" {
 		fmt.Fprintln(s.output, s.banner)
 	}
 
-	// Wait for shutdown signal or server error.
+	// Wait for context cancellation or server error.
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(s.output, "\nShutting down...")
@@ -158,6 +178,24 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+// listenAndServe begins serving and blocks until the server stops, choosing the
+// right primitive for the four combinations of {TLS or not} × {pre-bound
+// listener or bind Addr}. It returns http.ErrServerClosed on a normal shutdown.
+func (s *Server) listenAndServe() error {
+	if s.tlsConfig != nil {
+		s.httpServer.TLSConfig = s.tlsConfig
+		// Empty cert/key strings: certs are already in TLSConfig.
+		if s.listener != nil {
+			return s.httpServer.ServeTLS(s.listener, "", "")
+		}
+		return s.httpServer.ListenAndServeTLS("", "")
+	}
+	if s.listener != nil {
+		return s.httpServer.Serve(s.listener)
+	}
+	return s.httpServer.ListenAndServe()
 }
 
 // shutdown performs a graceful shutdown of the HTTP server, waiting up to
@@ -188,8 +226,13 @@ func (s *Server) classifyError(err error) error {
 	return fmt.Errorf("server error: %w", err)
 }
 
-// Addr returns the address the server is configured to listen on.
+// Addr returns the address the server listens on. When a pre-bound listener was
+// supplied, this is the listener's resolved address (so an ephemeral ":0" port
+// reads back as the actual port); otherwise it is the configured Addr.
 func (s *Server) Addr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
 	return s.httpServer.Addr
 }
 

@@ -22,6 +22,7 @@ var (
 	metricsEnabled bool
 	metricsPath    string
 	metricsFormat  string
+	metricsPort    int
 
 	// TLS flags
 	tlsEnabled    bool
@@ -81,6 +82,9 @@ Examples:
 		if cmd.Flags().Changed("metrics-format") {
 			cfg.Metrics.Format = metricsFormat
 		}
+		if cmd.Flags().Changed("metrics-port") {
+			cfg.Metrics.Port = metricsPort
+		}
 
 		// TLS flag overrides
 		if cmd.Flags().Changed("tls") {
@@ -120,9 +124,10 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 
 	// Metrics flags
-	rootCmd.PersistentFlags().BoolVar(&metricsEnabled, "metrics", true, "enable metrics endpoint")
-	rootCmd.PersistentFlags().StringVar(&metricsPath, "metrics-path", "/_metrics", "metrics endpoint path")
+	rootCmd.PersistentFlags().BoolVar(&metricsEnabled, "metrics", true, "enable the admin server (metrics endpoint + /healthz)")
+	rootCmd.PersistentFlags().StringVar(&metricsPath, "metrics-path", "/_metrics", "metrics endpoint path (served on the admin port)")
 	rootCmd.PersistentFlags().StringVar(&metricsFormat, "metrics-format", "json", "metrics output format (json, prometheus)")
+	rootCmd.PersistentFlags().IntVar(&metricsPort, "metrics-port", 9090, "admin port for metrics + /healthz (binds 127.0.0.1)")
 
 	// TLS flags
 	rootCmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "enable HTTPS/TLS")
