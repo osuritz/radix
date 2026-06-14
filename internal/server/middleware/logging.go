@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // LogFormat represents the logging output format
@@ -130,11 +131,12 @@ func Logging(config LoggingConfig) func(http.Handler) http.Handler {
 //  2. else NO_COLOR env set and non-empty       -> OFF (https://no-color.org).
 //  3. else FORCE_COLOR or CLICOLOR_FORCE set    -> ON (overrides only the TTY
 //     check below; it can never re-enable color past steps 1 or 2).
-//  4. else writer is not a TTY (char device)    -> OFF.
+//  4. else writer fails the TTY heuristic        -> OFF.
 //  5. else                                       -> ON.
 //
-// TTY detection is stdlib-only: the writer is type-asserted to *os.File and
-// Stat()ed; any non-*os.File writer (e.g. bytes.Buffer) is treated as non-TTY.
+// "TTY" here is the stdlib-only char-device heuristic in isTerminal, not a true
+// isatty; see that function for the heuristic's exact trade-offs and why a real
+// terminal check is avoided (it would pull in an external dependency).
 func resolveColor(noColor bool, w io.Writer) bool {
 	if noColor {
 		return false
@@ -148,8 +150,23 @@ func resolveColor(noColor bool, w io.Writer) bool {
 	return isTerminal(w)
 }
 
-// isTerminal reports whether w is a character device (a TTY). Only *os.File can
-// be a terminal; every other writer is treated as non-TTY.
+// isTerminal is a stdlib-only, best-effort terminal check — NOT a true isatty.
+//
+// It type-asserts w to *os.File and reports whether the underlying file is a
+// character device (os.ModeCharDevice). A real isatty() would issue a terminal
+// ioctl (TIOCGETA / TCGETS), which the standard library does not expose; doing
+// so would require golang.org/x/term or golang.org/x/sys, dependencies this
+// project deliberately avoids. The trade-off of the char-device heuristic:
+//
+//   - Correctly classified as non-TTY: the common non-interactive targets —
+//     regular files and pipes (e.g. `radix ... > out.log` or `| tee`) — so color
+//     is auto-disabled exactly where it would corrupt captured output.
+//   - Falsely classified as a TTY: any character device, e.g. /dev/null and
+//     /dev/tty. These are uncommon log destinations, and the escape hatches
+//     cover them: NO_COLOR / --no-color force color off, FORCE_COLOR /
+//     CLICOLOR_FORCE force it on (see resolveColor).
+//
+// Any non-*os.File writer (e.g. bytes.Buffer) is treated as non-TTY.
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
@@ -261,6 +278,10 @@ func formatExtendedCLF(r *http.Request, status, size int) string {
 // formatter is deterministically testable.
 func formatDevLine(now time.Time, method, uri string, status, size int, d time.Duration, color bool) string {
 	ts := now.Format("15:04:05")
+	// Cap pathological custom methods to the method column width so they cannot
+	// shift the path/status columns to their right. Standard methods are <= 7
+	// runes (devMethodWidth) and are unaffected.
+	method = truncateRunes(method, devMethodWidth)
 	paddedMethod := padRight(method, devMethodWidth)
 	paddedPath := padRight(truncatePath(uri, devPathWidth), devPathWidth)
 	durationStr := formatDuration(d)
@@ -314,13 +335,18 @@ func formatDevLine(now time.Time, method, uri string, status, size int, d time.D
 	return b.String()
 }
 
-// padRight left-justifies s to width with trailing spaces. Strings already at
-// or beyond width are returned unchanged (callers truncate first where needed).
+// padRight left-justifies s to width with trailing spaces, where width is a
+// count of runes (not bytes). Using the rune count keeps multibyte content
+// (accented or CJK paths) aligned to the same visual column as ASCII content of
+// equal rune length; counting bytes would under-pad multibyte strings and shift
+// every column to its right. Strings already at or beyond width are returned
+// unchanged (callers truncate first where needed).
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	n := utf8.RuneCountInString(s)
+	if n >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-n)
 }
 
 // truncatePath shortens path to at most width runes, replacing the trailing
@@ -335,6 +361,20 @@ func truncatePath(path string, width int) string {
 		return "…"
 	}
 	return string(runes[:width-1]) + "…"
+}
+
+// truncateRunes shortens s to at most width runes by hard-cutting the overflow
+// (no ellipsis). It is used for the method column, where any over-long value is
+// already pathological and a clean cut keeps the column width fixed. Strings
+// within width are returned unchanged.
+func truncateRunes(s string, width int) string {
+	if width < 0 {
+		width = 0
+	}
+	if utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	return string([]rune(s)[:width])
 }
 
 // getMethodColor returns ANSI color code for HTTP method

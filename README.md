@@ -441,7 +441,9 @@ Color for the `dev` format is decided once at startup, in this precedence
    (this only overrides the TTY auto-detection in the next step; it can never
    re-enable color past steps 1–2).
 4. else the output is not a TTY (e.g. redirected to a file or a pipe) → color
-   **off**.
+   **off**. (TTY detection is a stdlib-only character-device heuristic, not a
+   true `isatty`; character devices such as `/dev/null` read as a TTY, so use the
+   overrides above for those edge cases.)
 5. otherwise → color **on**.
 
 ## TLS Certificates
