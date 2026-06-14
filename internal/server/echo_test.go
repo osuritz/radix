@@ -2,10 +2,17 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -340,6 +347,205 @@ func TestEcho_TLSSectionDisabled(t *testing.T) {
 	tlsSection := out["tls"].(map[string]any)
 	if tlsSection["enabled"] != false {
 		t.Errorf("expected tls.enabled=false, got %v", tlsSection["enabled"])
+	}
+	if v, ok := tlsSection["client_cert"]; !ok || v != nil {
+		t.Errorf("expected client_cert present and null when TLS disabled, got (present=%v) %#v", ok, v)
+	}
+}
+
+// makeTestClientCert builds a client certificate with known fields, signed by a
+// distinct in-test CA so the parsed issuer differs from the subject, and returns
+// the parsed *x509.Certificate for exercising clientCertInfo/tlsInfo.
+//
+// Organization is a single value per RDN: pkix marshaling does not preserve the
+// order of a multi-value Organization set, so single-element slices keep the
+// assertions deterministic while still exercising the []string shape.
+func makeTestClientCert(t *testing.T) *x509.Certificate {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   "Radix Test CA",
+			Organization: []string{"Radix CA Org"},
+		},
+		NotBefore:             time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:              time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA certificate: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse CA certificate: %v", err)
+	}
+
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	clientTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(0x1f2e3d4c),
+		Subject: pkix.Name{
+			CommonName:   "client.example.test",
+			Organization: []string{"Radix Test Org"},
+		},
+		NotBefore:   time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC),
+		NotAfter:    time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC),
+		DNSNames:    []string{"client.example.test", "alt.example.test"},
+		IPAddresses: []net.IP{net.ParseIP("192.0.2.10"), net.ParseIP("2001:db8::1")},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTmpl, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create client certificate: %v", err)
+	}
+	clientCert, err := x509.ParseCertificate(clientDER)
+	if err != nil {
+		t.Fatalf("parse client certificate: %v", err)
+	}
+	return clientCert
+}
+
+func TestTLSInfo_ClientCertPresented(t *testing.T) {
+	cert := makeTestClientCert(t)
+	state := &tls.ConnectionState{
+		Version:          tls.VersionTLS13,
+		CipherSuite:      tls.TLS_AES_128_GCM_SHA256,
+		ServerName:       "example.test",
+		PeerCertificates: []*x509.Certificate{cert},
+	}
+
+	info := tlsInfo(state)
+	clientCert, ok := info["client_cert"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected populated client_cert map, got %#v", info["client_cert"])
+	}
+
+	subject, ok := clientCert["subject"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected subject map, got %#v", clientCert["subject"])
+	}
+	if subject["cn"] != "client.example.test" {
+		t.Errorf("subject cn = %v, want client.example.test", subject["cn"])
+	}
+	if o, _ := subject["o"].([]string); len(o) != 1 || o[0] != "Radix Test Org" {
+		t.Errorf("subject o = %#v, want [Radix Test Org]", subject["o"])
+	}
+
+	issuer, ok := clientCert["issuer"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected issuer map, got %#v", clientCert["issuer"])
+	}
+	if issuer["cn"] != "Radix Test CA" {
+		t.Errorf("issuer cn = %v, want Radix Test CA", issuer["cn"])
+	}
+	if o, _ := issuer["o"].([]string); len(o) != 1 || o[0] != "Radix CA Org" {
+		t.Errorf("issuer o = %#v, want [Radix CA Org]", issuer["o"])
+	}
+
+	if got := clientCert["serial"]; got != cert.SerialNumber.String() {
+		t.Errorf("serial = %v, want %v", got, cert.SerialNumber.String())
+	}
+	if got := clientCert["not_before"]; got != "2024-01-02T03:04:05Z" {
+		t.Errorf("not_before = %v, want 2024-01-02T03:04:05Z", got)
+	}
+	if got := clientCert["not_after"]; got != "2025-01-02T03:04:05Z" {
+		t.Errorf("not_after = %v, want 2025-01-02T03:04:05Z", got)
+	}
+
+	dns, _ := clientCert["dns_names"].([]string)
+	if len(dns) != 2 || dns[0] != "client.example.test" || dns[1] != "alt.example.test" {
+		t.Errorf("dns_names = %#v, want [client.example.test alt.example.test]", clientCert["dns_names"])
+	}
+
+	ips, _ := clientCert["ip_addresses"].([]string)
+	if len(ips) != 2 || ips[0] != "192.0.2.10" || ips[1] != "2001:db8::1" {
+		t.Errorf("ip_addresses = %#v, want [192.0.2.10 2001:db8::1]", clientCert["ip_addresses"])
+	}
+}
+
+func TestTLSInfo_ClientCertAbsent(t *testing.T) {
+	tests := []struct {
+		name  string
+		state *tls.ConnectionState
+	}{
+		{name: "nil state", state: nil},
+		{
+			name: "tls without peer certs",
+			state: &tls.ConnectionState{
+				Version:          tls.VersionTLS13,
+				PeerCertificates: nil,
+			},
+		},
+		{
+			name: "tls with empty peer certs",
+			state: &tls.ConnectionState{
+				Version:          tls.VersionTLS13,
+				PeerCertificates: []*x509.Certificate{},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := tlsInfo(tt.state)
+			v, present := info["client_cert"]
+			if !present {
+				t.Fatalf("client_cert key should always be present, got %#v", info)
+			}
+			if v != nil {
+				t.Errorf("expected client_cert=nil when no peer cert, got %#v", v)
+			}
+		})
+	}
+}
+
+func TestEcho_TLSClientCertEndToEnd(t *testing.T) {
+	clientCert := makeTestClientCert(t)
+	state := &tls.ConnectionState{
+		Version:          tls.VersionTLS13,
+		CipherSuite:      tls.TLS_AES_128_GCM_SHA256,
+		ServerName:       "example.test",
+		PeerCertificates: []*x509.Certificate{clientCert},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.TLS = state
+
+	rec := doEcho(defaultEchoConfig(), req)
+	out := decodeEcho(t, rec)
+	tlsSection, ok := out["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("tls section missing: %#v", out["tls"])
+	}
+
+	// After a JSON round-trip, sub-objects decode as map[string]any and string
+	// slices as []any, so assert against the serialized shape clients observe.
+	cc, ok := tlsSection["client_cert"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected client_cert object in echoed JSON, got %#v", tlsSection["client_cert"])
+	}
+	subject := cc["subject"].(map[string]any)
+	if subject["cn"] != "client.example.test" {
+		t.Errorf("echoed subject cn = %v, want client.example.test", subject["cn"])
+	}
+	if cc["serial"] != clientCert.SerialNumber.String() {
+		t.Errorf("echoed serial = %v, want %v", cc["serial"], clientCert.SerialNumber.String())
+	}
+	dns, _ := cc["dns_names"].([]any)
+	if len(dns) != 2 || dns[0] != "client.example.test" {
+		t.Errorf("echoed dns_names = %#v", cc["dns_names"])
+	}
+	ips, _ := cc["ip_addresses"].([]any)
+	if len(ips) != 2 || ips[0] != "192.0.2.10" {
+		t.Errorf("echoed ip_addresses = %#v", cc["ip_addresses"])
 	}
 }
 

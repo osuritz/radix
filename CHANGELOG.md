@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Echo client-certificate inspection** — under client-auth/mTLS, the `echo`
+  response's `tls.client_cert` block now reports the presented client
+  certificate: subject and issuer distinguished names (CN and O), serial,
+  validity window (`not_before`/`not_after`, RFC3339), and DNS/IP
+  subject-alternative names. The `client_cert` field is always present in the
+  `tls` section and is `null` when no client certificate was presented.
 - **Config-driven auth header values from env vars and the OS keychain** — proxy
   header values can now reference `${env:NAME}` and `${keychain:SERVICE/ACCOUNT}`
   tokens, resolved per request (with a short TTL cache for keychain reads) so a
