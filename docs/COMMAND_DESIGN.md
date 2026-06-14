@@ -502,9 +502,9 @@ radix proxy [target] [flags]
 
 Radix supports pluggable auth header injection via the `HeaderProvider` Go interface. This is designed for corporate forks that compile in a custom provider (e.g., Okta, Azure AD) so that auth headers are injected automatically — no per-engineer configuration needed.
 
-**How it works:** If a fork registers exactly one custom `HeaderProvider`, it is used automatically for all proxied requests. No CLI flags or YAML config required. Engineers just run `radix proxy` and get auth headers.
+**How it works:** If a fork registers exactly one custom `HeaderProvider`, it is used automatically for all proxied requests. No CLI flags or YAML config required. Engineers just run `radix proxy` and get auth headers. When multiple providers are registered, select one explicitly with `proxy.auth.provider: <name>` (an unregistered name is a hard startup error); if none is selected the registry does not auto-pick, and resolution falls back to the static provider.
 
-**Built-in provider:** `static` — Injects fixed headers from the `--header` flag or config file. Only used when no custom provider is registered.
+**Built-in provider:** `static` — Injects fixed headers from the `--header` flag or config file. Used when no custom provider is registered, or when multiple are registered and none is explicitly selected.
 
 See [IMPLEMENTATION_PLAN.md Section 15](../IMPLEMENTATION_PLAN.md#15-auth-extensions--middleware-extensibility) for the full `HeaderProvider` interface and fork integration pattern.
 
@@ -597,8 +597,8 @@ proxy:
   # See IMPLEMENTATION_PLAN.md Section 15 for the HeaderProvider interface.
   # auth:
   #   provider: okta          # Only needed to disambiguate multiple providers
-  #   config:                 # Optional provider-specific settings
-  #     audience: "api.internal"
+  #   config:                 # Provider-specific settings — read by the provider
+  #     audience: "api.internal"   # itself; radix core does not consume/pass this.
 
   # CORS
   cors:
