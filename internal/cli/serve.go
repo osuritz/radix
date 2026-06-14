@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/osuritz/radix/internal/config"
 	"github.com/osuritz/radix/internal/metrics"
 	"github.com/osuritz/radix/internal/server"
 	"github.com/osuritz/radix/internal/server/middleware"
@@ -17,12 +18,16 @@ import (
 )
 
 var (
-	serveDir   string
-	serveIndex string
-	serveSPA   bool
-	serveCORS  bool
-	serveGzip  bool
-	serveCache string
+	serveDir          string
+	serveIndex        string
+	serveSPA          bool
+	serveCORS         bool
+	serveGzip         bool
+	serveCache        string
+	serveHSTS         bool
+	serveHSTSMaxAge   int
+	serveHTTPRedirect bool
+	serveHTTPPort     int
 )
 
 var serveCmd = &cobra.Command{
@@ -50,10 +55,15 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveCORS, "cors", false, "enable CORS headers")
 	serveCmd.Flags().BoolVar(&serveGzip, "gzip", false, "enable gzip compression")
 	serveCmd.Flags().StringVar(&serveCache, "cache", "", "Cache-Control header value")
+	serveCmd.Flags().BoolVar(&serveHSTS, "hsts", false, "send Strict-Transport-Security header (requires --tls)")
+	serveCmd.Flags().IntVar(&serveHSTSMaxAge, "hsts-max-age", 31536000, "HSTS max-age in seconds")
+	serveCmd.Flags().BoolVar(&serveHTTPRedirect, "http-redirect", false, "redirect plain HTTP to HTTPS (requires --tls)")
+	serveCmd.Flags().IntVar(&serveHTTPPort, "http-port", 8080, "port for the HTTP→HTTPS redirect listener")
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
-	// Override serve config from flags
+// applyServeFlagOverrides overrides the loaded serve config with any
+// command-line flags that were explicitly set.
+func applyServeFlagOverrides(cmd *cobra.Command, args []string) {
 	if len(args) > 0 {
 		cfg.Serve.Dir = args[0]
 	}
@@ -74,6 +84,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("cache") {
 		cfg.Serve.Cache = serveCache
+	}
+	if cmd.Flags().Changed("hsts") {
+		cfg.Serve.HSTS = serveHSTS
+	}
+	if cmd.Flags().Changed("hsts-max-age") {
+		cfg.Serve.HSTSMaxAge = serveHSTSMaxAge
+	}
+	if cmd.Flags().Changed("http-redirect") {
+		cfg.Serve.HTTPRedirect = serveHTTPRedirect
+	}
+	if cmd.Flags().Changed("http-port") {
+		cfg.Serve.HTTPPort = serveHTTPPort
+	}
+}
+
+func runServe(cmd *cobra.Command, args []string) error {
+	applyServeFlagOverrides(cmd, args)
+
+	if err := config.ValidateServeTLS(cfg); err != nil {
+		return err
 	}
 
 	// Resolve directory to absolute path
@@ -131,6 +161,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cfg.Serve.CORS {
 		finalHandler = middleware.CORS()(finalHandler)
 	}
+	if cfg.Serve.HSTS {
+		finalHandler = middleware.HSTS(cfg.Serve.HSTSMaxAge)(finalHandler)
+	}
 
 	logCfg := middleware.LoggingConfig{
 		Format:  middleware.LogFormatDev,
@@ -172,5 +205,59 @@ func runServe(cmd *cobra.Command, args []string) error {
 	srvCfg.Banner = fmt.Sprintf("Serving %s on %s://%s", dir, scheme, addr)
 
 	srv := server.NewServer(srvCfg)
-	return srv.Start(context.Background())
+
+	// Build the optional HTTP→HTTPS redirect server.
+	var redirectSrv *server.Server
+	if cfg.Serve.HTTPRedirect {
+		redirectAddr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Serve.HTTPPort))
+		redirectSrv = server.NewServer(&server.Config{
+			Addr:    redirectAddr,
+			Handler: server.RedirectToHTTPS(cfg.Port),
+			Banner:  fmt.Sprintf("Redirecting http://%s to %s", redirectAddr, addr),
+			// No TLSConfig: the redirect listener speaks plain HTTP.
+		})
+	}
+
+	// A shared, cancelable context ties the two servers together: when either
+	// stops (signal or error), the other is asked to shut down too.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	return runServeServers(ctx, srv, redirectSrv)
+}
+
+// runServeServers starts the main server and (if non-nil) the redirect server,
+// blocking until ctx is canceled or either server fails.
+//
+// A redirect-listener failure (e.g. its port is already in use) cancels the
+// shared context, tearing down the main server too, and is returned to the
+// caller (taking precedence only when the main server itself shut down cleanly).
+// Because Server.Start returns nil on a clean signal/context shutdown, a normal
+// SIGINT yields no spurious error. Waiting on the redirect goroutine's channel
+// also guarantees its graceful Shutdown has completed before this returns.
+func runServeServers(ctx context.Context, main, redirect *server.Server) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var redirectErrCh chan error
+	if redirect != nil {
+		redirectErrCh = make(chan error, 1)
+		go func() {
+			rerr := redirect.Start(ctx)
+			if rerr != nil {
+				cancel() // a redirect failure tears down the main server too
+			}
+			redirectErrCh <- rerr
+		}()
+	}
+
+	err := main.Start(ctx)
+	cancel()
+
+	if redirectErrCh != nil {
+		if rerr := <-redirectErrCh; rerr != nil && err == nil {
+			err = fmt.Errorf("http redirect listener: %w", rerr)
+		}
+	}
+	return err
 }

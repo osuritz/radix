@@ -29,10 +29,11 @@ serve:
   cors: true
   gzip: true
   cache: "max-age=3600"
-  # TLS-specific options
-  http_redirect: false
-  http_port: 8080
-  hsts: false
+  # TLS-specific options (all require tls.enabled: true)
+  hsts: false              # send Strict-Transport-Security header (HTTPS only)
+  hsts_max_age: 31536000   # HSTS max-age in seconds (default 1 year)
+  http_redirect: false     # run a plain-HTTP listener that 308-redirects to HTTPS
+  http_port: 8080          # port for the redirect listener (must differ from `port`)
 
 # Proxy command configuration
 proxy:
