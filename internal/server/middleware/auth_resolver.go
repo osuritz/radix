@@ -31,6 +31,11 @@ func (keyringReader) Get(service, account string) (string, error) {
 // restarting radix, but reading the OS credential store on every request is
 // expensive (a subprocess on macOS). A short TTL keeps the value fresh while
 // avoiding a lookup per request.
+//
+// Tradeoff: after a secret is rotated or revoked in the keychain, an already
+// cached value may still be served for up to this window. That is acceptable
+// for a local dev proxy; it is not intended for production credential
+// enforcement.
 const keychainTTL = 10 * time.Second
 
 // valueResolver expands ${scheme:arg} tokens in header value templates. It is
@@ -104,6 +109,11 @@ func (r *valueResolver) resolveToken(token string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("environment variable %q is not set", arg)
 		}
+		// A set-but-empty variable is treated as missing: injecting an empty
+		// credential and proxying anyway would defeat the fail-loud guarantee.
+		if val == "" {
+			return "", fmt.Errorf("environment variable %q is set but empty", arg)
+		}
 		return val, nil
 	case "keychain":
 		service, account, ok := strings.Cut(arg, "/")
@@ -117,19 +127,34 @@ func (r *valueResolver) resolveToken(token string) (string, error) {
 }
 
 func (r *valueResolver) keychainGet(service, account string) (string, error) {
-	key := service + "/" + account
+	// A NUL separator can't appear in a service/account, so distinct pairs never
+	// collide on the same cache key.
+	key := service + "\x00" + account
 
+	// Fast path: serve a live cache entry without blocking other lookups.
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if c, ok := r.cache[key]; ok && time.Now().Before(c.expires) {
+		r.mu.Unlock()
 		return c.value, nil
 	}
+	r.mu.Unlock()
+
+	// Slow path: read the OS credential store WITHOUT holding the lock — on
+	// macOS this spawns the `security` subprocess and can take tens of ms, so
+	// holding the lock would serialize every concurrent cache-miss request. A
+	// rare duplicate concurrent Get is redundant but harmless.
 	val, err := r.keychain.Get(service, account)
 	if err != nil {
-		return "", fmt.Errorf("keychain lookup %q failed: %w", key, err)
+		return "", fmt.Errorf("keychain lookup %q/%q failed: %w", service, account, err)
 	}
+	// Fail loud on an empty secret rather than injecting an empty credential.
+	if val == "" {
+		return "", fmt.Errorf("keychain secret %q/%q is empty", service, account)
+	}
+
+	r.mu.Lock()
 	r.cache[key] = cachedSecret{value: val, expires: time.Now().Add(keychainTTL)}
+	r.mu.Unlock()
 	return val, nil
 }
 

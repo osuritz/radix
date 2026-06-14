@@ -71,6 +71,24 @@ func TestValueResolver_EnvUnsetIsError(t *testing.T) {
 	}
 }
 
+func TestValueResolver_EnvEmptyIsError(t *testing.T) {
+	// A set-but-empty env var must fail loud, not inject an empty credential.
+	t.Setenv("RADIX_TEST_EMPTY", "")
+	r := newValueResolver(nil)
+	if _, err := r.resolve("${env:RADIX_TEST_EMPTY}"); err == nil {
+		t.Fatal("expected error for set-but-empty env var, got nil")
+	}
+}
+
+func TestValueResolver_KeychainEmptyValueIsError(t *testing.T) {
+	// An empty keychain secret must fail loud rather than inject an empty value.
+	kc := newFakeKeychain(map[string]string{"work-cli/jwt": ""})
+	r := newValueResolver(kc)
+	if _, err := r.resolve("${keychain:work-cli/jwt}"); err == nil {
+		t.Fatal("expected error for empty keychain secret, got nil")
+	}
+}
+
 func TestValueResolver_Keychain(t *testing.T) {
 	kc := newFakeKeychain(map[string]string{"work-cli/jwt": "tok-123"})
 	r := newValueResolver(kc)
@@ -107,7 +125,7 @@ func TestValueResolver_KeychainExpired(t *testing.T) {
 	}
 	// Force the cached entry to be stale.
 	r.mu.Lock()
-	r.cache["work-cli/jwt"] = cachedSecret{value: "tok-123", expires: time.Unix(0, 0)}
+	r.cache["work-cli\x00jwt"] = cachedSecret{value: "tok-123", expires: time.Unix(0, 0)}
 	r.mu.Unlock()
 
 	if _, err := r.resolve("${keychain:work-cli/jwt}"); err != nil {
@@ -151,6 +169,7 @@ func TestValueResolver_Errors(t *testing.T) {
 		{"unterminated", "${env:FOO"},
 		{"no colon", "${notascheme}"},
 		{"unknown scheme", "${vault:secret/foo}"},
+		{"empty env name", "${env:}"},
 		{"keychain missing slash", "${keychain:noslash}"},
 		{"keychain empty account", "${keychain:svc/}"},
 		{"keychain empty service", "${keychain:/acct}"},

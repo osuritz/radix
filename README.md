@@ -162,10 +162,11 @@ radix proxy http://localhost:3000 \
   --header "Authorization: Bearer ${keychain:work-cli/jwt}"
 ```
 
-Keychain reads are cached briefly, so a token rotated by another tool is picked up
-without restarting radix. Resolution fails loud — an unset variable or a keychain
-miss returns `502` rather than silently proxying without credentials — and
-injected values are never written to logs.
+Keychain reads are cached briefly (~10s), so a token rotated by another tool is
+picked up without restarting radix; note the flip side is that a revoked secret
+may still be served until that window elapses. Resolution fails loud — an unset
+or empty variable, or a keychain miss, returns `502` rather than silently
+proxying without credentials — and injected values are never written to logs.
 
 For a structured, validatable alternative to inline `${...}` tokens, set
 `proxy.auth.provider: headers` and list each header (`value` / `env` / `keychain`
