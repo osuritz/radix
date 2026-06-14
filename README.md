@@ -148,7 +148,7 @@ curl -X POST localhost:8080/post -d '{"hi":"there"}' -H 'Content-Type: applicati
 | Endpoint | Description |
 |----------|-------------|
 | `GET /get`, `POST /post`, `PUT /put`, `PATCH /patch`, `DELETE /delete` | httpbin-style request description (body methods also include `data`/`json`/`form`) |
-| `ANY /anything`, `ANY /anything/{path...}` | Same description for any method/path |
+| `ANY /anything`, `ANY /anything/` | Same description for any method (`/anything/` matches any sub-path) |
 | `GET /headers` | Request headers |
 | `GET /ip` | Client origin IP |
 | `GET /user-agent` | User-Agent header |

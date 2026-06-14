@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -20,6 +21,12 @@ const maxMockDelay = 10 * time.Second
 
 // maxMockBytes caps the number of bytes returned by /bytes/{n}.
 const maxMockBytes = 102400
+
+// maxMockBodyBytes caps the number of request body bytes read by the
+// body-reflecting endpoints (/post, /put, /patch, /delete, /anything). Bodies
+// larger than this yield a 413, preventing an unbounded read from exhausting
+// memory.
+const maxMockBodyBytes = 1 << 20 // 1MB
 
 // MockConfig configures the behavior of the mock handler returned by
 // NewMockHandler. It controls whether the built-in httpbin-style endpoints
@@ -70,15 +77,17 @@ func NewMockHandler(cfg MockConfig) http.Handler {
 
 	mux := http.NewServeMux()
 	if cfg.Builtin {
-		registerBuiltins(mux, normalizePrefix(cfg.Prefix))
+		registerBuiltins(mux, NormalizePrefix(cfg.Prefix))
 	}
 
 	return withLatencyAndFailures(mux, cfg)
 }
 
-// normalizePrefix cleans a user-supplied prefix so it starts with "/" and does
-// not end with "/" (except for the empty/root case, which yields "").
-func normalizePrefix(prefix string) string {
+// NormalizePrefix cleans a user-supplied prefix so it starts with "/" and does
+// not end with "/" (except for the empty/root case, which yields ""). It is
+// exported so the CLI can validate a prefix using the exact normalization that
+// route registration applies.
+func NormalizePrefix(prefix string) string {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" || prefix == "/" {
 		return ""
@@ -92,6 +101,11 @@ func normalizePrefix(prefix string) string {
 // withLatencyAndFailures wraps next so that every request first incurs the
 // configured latency (fixed + jitter, context-aware) and may be short-circuited
 // with a random failure response based on cfg.FailRate.
+//
+// By design, latency and fail-rate apply to ALL mock requests, including
+// unmatched paths that would otherwise 404. This is intentional chaos-testing
+// behavior: a client exercising an unknown path still sees realistic latency
+// and failures.
 func withLatencyAndFailures(next http.Handler, cfg MockConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Random failure injection: with probability FailRate/100 respond with
@@ -155,10 +169,17 @@ func registerBuiltins(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("GET "+p("/xml"), handleXML)
 }
 
+// errMockBodyTooLarge signals that a request body exceeded maxMockBodyBytes and
+// the handler should respond with 413.
+var errMockBodyTooLarge = errors.New("mock: request body too large")
+
 // reflectResponse builds the common httpbin-style request description shared by
 // /get, /post, /anything, etc. For body-bearing methods it also includes the
-// raw body, parsed JSON, and parsed form.
-func reflectResponse(r *http.Request) map[string]any {
+// raw body, parsed JSON, and parsed form. The body read is bounded by
+// maxMockBodyBytes via http.MaxBytesReader; a body exceeding the limit returns
+// errMockBodyTooLarge so the caller can respond with a 413. The response writer
+// is required by MaxBytesReader to close the connection on overflow.
+func reflectResponse(w http.ResponseWriter, r *http.Request) (map[string]any, error) {
 	resp := map[string]any{
 		"args":    map[string][]string(r.URL.Query()),
 		"headers": map[string][]string(r.Header),
@@ -167,19 +188,39 @@ func reflectResponse(r *http.Request) map[string]any {
 		"method":  r.Method,
 	}
 
-	if methodHasBody(r.Method) {
-		body, _ := io.ReadAll(r.Body)
+	if methodHasBody(r.Method) && r.Body != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMockBodyBytes))
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				return nil, errMockBodyTooLarge
+			}
+			// Other read errors: continue with whatever was read rather than
+			// failing the response.
+		}
 		resp["data"] = string(body)
 		resp["json"] = parseJSONBody(body, r.Header.Get("Content-Type"))
 		resp["form"] = parseFormBody(body, r.Header.Get("Content-Type"))
 	}
 
-	return resp
+	return resp, nil
 }
 
 // handleReflect serves the httpbin-style request description.
 func handleReflect(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, reflectResponse(r))
+	resp, err := reflectResponse(w, r)
+	if err != nil {
+		writeBodyTooLarge(w)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+// writeBodyTooLarge responds with a 413 and a small JSON error payload.
+func writeBodyTooLarge(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	_, _ = w.Write([]byte(`{"error":"request body too large"}`))
 }
 
 // handleHeaders returns the request headers.
@@ -199,14 +240,20 @@ func handleUserAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"user-agent": r.UserAgent()})
 }
 
-// handleUUID returns a freshly generated RFC 4122 version 4 UUID.
+// handleUUID returns a freshly generated RFC 4122 version 4 UUID. If the system
+// RNG fails it responds with a 500 rather than emitting a malformed UUID.
 func handleUUID(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{"uuid": uuidV4()})
+	u, err := uuidV4()
+	if err != nil {
+		http.Error(w, `{"error":"failed to generate uuid"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"uuid": u})
 }
 
 // handleStatus responds with the status code(s) named in the {code} path
 // segment. A single code is returned directly; a comma-separated list selects
-// one at random. Each code must be in [100, 599]; otherwise a 400 is returned.
+// one at random. Each code must be in [200, 599]; otherwise a 400 is returned.
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	code, ok := statusFromCodes(r.PathValue("code"))
 	if !ok {
@@ -234,7 +281,12 @@ func handleDelay(w http.ResponseWriter, r *http.Request) {
 		case <-t.C:
 		}
 	}
-	writeJSON(w, reflectResponse(r))
+	resp, rErr := reflectResponse(w, r)
+	if rErr != nil {
+		writeBodyTooLarge(w)
+		return
+	}
+	writeJSON(w, resp)
 }
 
 // handleBytes returns n random bytes (capped at maxMockBytes) as
@@ -375,14 +427,16 @@ func parseFormBody(body []byte, contentType string) any {
 }
 
 // statusFromCodes parses a single status code or a comma-separated list and
-// returns one valid code in [100, 599]. For a list, a random element is chosen.
-// It returns ok=false if the input is empty or any code is invalid.
+// returns one valid code in [200, 599]. For a list, a random element is chosen.
+// It returns ok=false if the input is empty or any code is invalid. 1xx codes
+// are rejected because net/http treats WriteHeader(1xx) as informational (the
+// server can still finish with a 200), which is misleading for a mock.
 func statusFromCodes(raw string) (int, bool) {
 	parts := strings.Split(raw, ",")
 	codes := make([]int, 0, len(parts))
 	for _, part := range parts {
 		code, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || code < 100 || code > 599 {
+		if err != nil || code < 200 || code > 599 {
 			return 0, false
 		}
 		codes = append(codes, code)
@@ -427,16 +481,16 @@ func mockDelayFromValue(seg string) (time.Duration, bool) {
 	return time.Duration(secs * float64(time.Second)), true
 }
 
-// uuidV4 returns a random RFC 4122 version 4 UUID string. On the (practically
-// impossible) failure of the crypto RNG it falls back to a time-derived value;
-// uniqueness is best-effort for a debugging endpoint.
-func uuidV4() string {
+// uuidV4 returns a random RFC 4122 version 4 UUID string. It propagates any
+// crypto/rand read error to the caller rather than fabricating a value, so a
+// malformed UUID is never emitted.
+func uuidV4() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("00000000-0000-4000-8000-%012x", time.Now().UnixNano())
+		return "", fmt.Errorf("mock: read random for uuid: %w", err)
 	}
 	// Set version (4) and variant (RFC 4122) bits.
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

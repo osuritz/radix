@@ -239,6 +239,7 @@ func TestMock_Status(t *testing.T) {
 		{"out of range", "/status/999", http.StatusBadRequest, nil},
 		{"non-numeric", "/status/abc", http.StatusBadRequest, nil},
 		{"low out of range", "/status/99", http.StatusBadRequest, nil},
+		{"informational rejected", "/status/100", http.StatusBadRequest, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -330,13 +331,16 @@ func TestStatusFromCodes(t *testing.T) {
 		wantOK bool
 	}{
 		{"single valid", "418", 418, true},
-		{"lower bound", "100", 100, true},
+		{"lower bound", "200", 200, true},
 		{"upper bound", "599", 599, true},
+		{"informational rejected", "100", 0, false},
+		{"informational upper rejected", "199", 0, false},
 		{"too high", "600", 0, false},
 		{"too low", "99", 0, false},
 		{"non-numeric", "abc", 0, false},
 		{"empty", "", 0, false},
 		{"list with invalid", "200,abc", 0, false},
+		{"list with informational", "200,100", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -505,6 +509,59 @@ func TestMock_BuiltinDisabled(t *testing.T) {
 	}
 }
 
+func TestMock_BodyTooLarge(t *testing.T) {
+	// A body just over the 1MB limit must yield a 413 with a JSON error.
+	big := strings.Repeat("a", maxMockBodyBytes+1)
+	for _, path := range []string{"/post", "/put", "/patch", "/delete", "/anything"} {
+		t.Run(path, func(t *testing.T) {
+			method := http.MethodPost
+			switch path {
+			case "/put":
+				method = http.MethodPut
+			case "/patch":
+				method = http.MethodPatch
+			case "/delete":
+				method = http.MethodDelete
+			}
+			req := httptest.NewRequest(method, path, strings.NewReader(big))
+			rec := doMock(defaultMockConfig(), req)
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("path %q: expected 413, got %d", path, rec.Code)
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("path %q: expected application/json, got %q", path, ct)
+			}
+			if !strings.Contains(rec.Body.String(), "request body too large") {
+				t.Errorf("path %q: expected error body, got %q", path, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestMock_BodyAtLimitOK(t *testing.T) {
+	// A body exactly at the limit must still succeed.
+	body := strings.Repeat("a", maxMockBodyBytes)
+	req := httptest.NewRequest(http.MethodPost, "/post", strings.NewReader(body))
+	rec := doMock(defaultMockConfig(), req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for body at limit, got %d", rec.Code)
+	}
+	out := decodeMock(t, rec)
+	if got, _ := out["data"].(string); len(got) != maxMockBodyBytes {
+		t.Errorf("expected %d body bytes echoed, got %d", maxMockBodyBytes, len(got))
+	}
+}
+
+func TestUUIDV4(t *testing.T) {
+	u, err := uuidV4()
+	if err != nil {
+		t.Fatalf("uuidV4 returned error: %v", err)
+	}
+	if !uuidV4Re.MatchString(u) {
+		t.Errorf("uuidV4 produced non-v4 UUID: %q", u)
+	}
+}
+
 func TestNormalizePrefix(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -518,8 +575,8 @@ func TestNormalizePrefix(t *testing.T) {
 		{"  /api  ", "/api"},
 	}
 	for _, tt := range tests {
-		if got := normalizePrefix(tt.in); got != tt.want {
-			t.Errorf("normalizePrefix(%q) = %q, want %q", tt.in, got, tt.want)
+		if got := NormalizePrefix(tt.in); got != tt.want {
+			t.Errorf("NormalizePrefix(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

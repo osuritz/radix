@@ -3,9 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/osuritz/radix/internal/metrics"
 	"github.com/osuritz/radix/internal/server"
@@ -59,9 +62,9 @@ func init() {
 	mockCmd.Flags().StringVar(&mockPrefix, "prefix", "", "path prefix for built-in endpoints (e.g. /_test)")
 }
 
-// applyMockFlags overrides mock config fields from CLI flags, parsing duration
-// strings and surfacing parse errors.
-func applyMockFlags(cmd *cobra.Command) error {
+// applyMockFlags overrides mock config fields from CLI flags that were
+// explicitly set, parsing duration strings later in runMock.
+func applyMockFlags(cmd *cobra.Command) {
 	if cmd.Flags().Changed("latency") {
 		cfg.Mock.Latency = mockLatency
 	}
@@ -83,20 +86,21 @@ func applyMockFlags(cmd *cobra.Command) error {
 	if cmd.Flags().Changed("prefix") {
 		cfg.Mock.Prefix = mockPrefix
 	}
-	return nil
 }
 
 func runMock(cmd *cobra.Command, _ []string) error {
-	if err := applyMockFlags(cmd); err != nil {
-		return err
-	}
+	applyMockFlags(cmd)
 
-	// Validate fail-rate and fail-status at the CLI boundary.
-	if r := cfg.Mock.FailRate; r < 0 || r > 100 {
+	// Validate fail-rate, fail-status, and prefix at the CLI boundary.
+	if r := cfg.Mock.FailRate; math.IsNaN(r) || math.IsInf(r, 0) || r < 0 || r > 100 {
 		return fmt.Errorf("invalid --fail-rate %g: must be between 0 and 100", r)
 	}
-	if s := cfg.Mock.FailStatus; s < 100 || s > 599 {
-		return fmt.Errorf("invalid --fail-status %d: must be between 100 and 599", s)
+	// 1xx codes are excluded: net/http treats WriteHeader(1xx) as informational.
+	if s := cfg.Mock.FailStatus; s < 200 || s > 599 {
+		return fmt.Errorf("invalid --fail-status %d: must be between 200 and 599", s)
+	}
+	if err := validateMockPrefix(cfg.Mock.Prefix); err != nil {
+		return err
 	}
 
 	// Parse latency durations from their config string form.
@@ -187,6 +191,24 @@ func runMock(cmd *cobra.Command, _ []string) error {
 
 	srv := server.NewServer(srvCfg)
 	return srv.Start(context.Background())
+}
+
+// validateMockPrefix rejects a --prefix that is not a simple path-segment
+// sequence. After normalization an empty prefix (root mount) is allowed;
+// otherwise it must start with "/" and contain no ServeMux wildcard/pattern
+// characters ('{', '}') or whitespace, any of which can panic at route
+// registration.
+func validateMockPrefix(prefix string) error {
+	normalized := server.NormalizePrefix(prefix)
+	if normalized == "" {
+		return nil
+	}
+	if !strings.HasPrefix(normalized, "/") ||
+		strings.ContainsAny(normalized, "{}") ||
+		strings.ContainsFunc(normalized, unicode.IsSpace) {
+		return fmt.Errorf("invalid --prefix %q: must be a simple path like /_test (no braces or whitespace)", prefix)
+	}
+	return nil
 }
 
 // parseOptionalDuration parses a duration string, treating an empty string as a

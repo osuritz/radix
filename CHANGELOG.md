@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - TLS/HTTPS listener support, metrics integration, and graceful shutdown
 - `radix mock` command with built-in httpbin-style endpoints
   - HTTP method endpoints: `/get`, `/post`, `/put`, `/patch`, `/delete` returning httpbin-style JSON (args, headers, origin, url, method; plus data/json/form for body methods)
-  - `/anything` and `/anything/{path...}` for any HTTP method
+  - `/anything` and `/anything/` (subtree, any sub-path) for any HTTP method
   - Request inspection: `/headers`, `/ip`, `/user-agent`, `/uuid` (RFC 4122 v4)
-  - `/status/{code}` (single or comma-separated random choice, validated to [100,599])
+  - `/status/{code}` (single or comma-separated random choice, validated to [200,599])
   - `/delay/{n}` (Go duration or bare seconds, capped at 10s, context-aware)
   - `/bytes/{n}` (random bytes, capped at 100KB, with correct Content-Length)
   - Response formats: `/json`, `/html`, `/xml`
