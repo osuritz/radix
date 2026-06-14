@@ -4,7 +4,7 @@ This document provides comprehensive guidance for AI assistants (like Claude Cod
 
 **Last Updated**: 2026-01-02
 **Project Version**: v0.1.0-alpha.1
-**Go Version**: 1.24+
+**Go Version**: 1.25+
 
 ---
 
@@ -44,7 +44,7 @@ Provides local development HTTP capabilities:
 - **Not Yet Implemented**: serve, proxy, echo, mock commands
 
 ### Key Characteristics
-- **Language**: Go 1.24+
+- **Language**: Go 1.25+
 - **CLI Framework**: Cobra + Viper
 - **Architecture**: Single binary, no runtime dependencies
 - **Platforms**: macOS, Linux, Windows (amd64, arm64)
@@ -123,7 +123,7 @@ radix/
 
 ### Prerequisites
 
-- **Go**: 1.24 or higher
+- **Go**: 1.25 or higher
 - **Make**: GNU Make for build automation
 - **golangci-lint**: For code linting
 - **Git**: Version control

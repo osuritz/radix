@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -334,6 +335,10 @@ func TestServer_GracefulShutdownOnContextCancel(t *testing.T) {
 
 func TestServer_PortConflict(t *testing.T) {
 	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permits duplicate loopback binds, so port-conflict detection is not reliably testable here")
+	}
 
 	port := getFreePort(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)

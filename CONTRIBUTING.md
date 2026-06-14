@@ -6,7 +6,7 @@ Thank you for your interest in contributing to radix! This document provides gui
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.25 or higher
 - Git
 - Make
 
