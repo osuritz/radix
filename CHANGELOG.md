@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-14
+
 This release completes the core command set. Radix now provides `serve`, `proxy`,
 `echo`, `mock`, and `gencert` alongside the existing `version` and `validate`
 commands, all with TLS/HTTPS support, metrics, structured logging, and graceful
@@ -107,5 +109,6 @@ shutdown.
 ### Note
 This is an alpha release to test the release workflow. Server commands (serve, proxy, echo, mock) are not yet implemented.
 
-[Unreleased]: https://github.com/osuritz/radix/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/osuritz/radix/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/osuritz/radix/compare/v0.1.0-alpha.1...v0.2.0
 [0.1.0-alpha.1]: https://github.com/osuritz/radix/releases/tag/v0.1.0-alpha.1
