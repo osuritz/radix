@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CORS headers (--cors)
   - Gzip compression (--gzip)
   - Cache-Control header (--cache)
+  - HSTS header (--hsts, --hsts-max-age) over HTTPS (requires --tls)
+  - HTTP→HTTPS redirect listener (--http-redirect, --http-port) issuing 308 Permanent Redirect (requires --tls; --http-port must differ from --port)
   - TLS/HTTPS support
   - Metrics integration
   - Graceful shutdown

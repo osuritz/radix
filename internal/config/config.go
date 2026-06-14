@@ -58,6 +58,7 @@ type ServeConfig struct {
 	HTTPRedirect bool   `mapstructure:"http_redirect"`
 	HTTPPort     int    `mapstructure:"http_port"`
 	HSTS         bool   `mapstructure:"hsts"`
+	HSTSMaxAge   int    `mapstructure:"hsts_max_age"`
 }
 
 // ProxyConfig represents configuration for the proxy command
@@ -203,6 +204,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("serve.http_redirect", false)
 	v.SetDefault("serve.http_port", 8080)
 	v.SetDefault("serve.hsts", false)
+	v.SetDefault("serve.hsts_max_age", 31536000)
 
 	// Proxy defaults
 	v.SetDefault("proxy.timeout", "30s")

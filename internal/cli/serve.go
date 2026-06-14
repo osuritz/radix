@@ -17,12 +17,16 @@ import (
 )
 
 var (
-	serveDir   string
-	serveIndex string
-	serveSPA   bool
-	serveCORS  bool
-	serveGzip  bool
-	serveCache string
+	serveDir          string
+	serveIndex        string
+	serveSPA          bool
+	serveCORS         bool
+	serveGzip         bool
+	serveCache        string
+	serveHSTS         bool
+	serveHSTSMaxAge   int
+	serveHTTPRedirect bool
+	serveHTTPPort     int
 )
 
 var serveCmd = &cobra.Command{
@@ -50,10 +54,15 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveCORS, "cors", false, "enable CORS headers")
 	serveCmd.Flags().BoolVar(&serveGzip, "gzip", false, "enable gzip compression")
 	serveCmd.Flags().StringVar(&serveCache, "cache", "", "Cache-Control header value")
+	serveCmd.Flags().BoolVar(&serveHSTS, "hsts", false, "send Strict-Transport-Security header (requires --tls)")
+	serveCmd.Flags().IntVar(&serveHSTSMaxAge, "hsts-max-age", 31536000, "HSTS max-age in seconds")
+	serveCmd.Flags().BoolVar(&serveHTTPRedirect, "http-redirect", false, "redirect plain HTTP to HTTPS (requires --tls)")
+	serveCmd.Flags().IntVar(&serveHTTPPort, "http-port", 8080, "port for the HTTP→HTTPS redirect listener")
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
-	// Override serve config from flags
+// applyServeFlagOverrides overrides the loaded serve config with any
+// command-line flags that were explicitly set.
+func applyServeFlagOverrides(cmd *cobra.Command, args []string) {
 	if len(args) > 0 {
 		cfg.Serve.Dir = args[0]
 	}
@@ -74,6 +83,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("cache") {
 		cfg.Serve.Cache = serveCache
+	}
+	if cmd.Flags().Changed("hsts") {
+		cfg.Serve.HSTS = serveHSTS
+	}
+	if cmd.Flags().Changed("hsts-max-age") {
+		cfg.Serve.HSTSMaxAge = serveHSTSMaxAge
+	}
+	if cmd.Flags().Changed("http-redirect") {
+		cfg.Serve.HTTPRedirect = serveHTTPRedirect
+	}
+	if cmd.Flags().Changed("http-port") {
+		cfg.Serve.HTTPPort = serveHTTPPort
+	}
+}
+
+// validateServeTLSOptions checks serve options that are only meaningful when
+// TLS is enabled (HSTS and the HTTP→HTTPS redirect listener).
+func validateServeTLSOptions() error {
+	// HSTS and HTTP→HTTPS redirect are only meaningful with TLS enabled.
+	if cfg.Serve.HSTS && !cfg.TLS.Enabled {
+		return fmt.Errorf("--hsts requires --tls")
+	}
+	if cfg.Serve.HTTPRedirect {
+		if !cfg.TLS.Enabled {
+			return fmt.Errorf("--http-redirect requires --tls")
+		}
+		if cfg.Serve.HTTPPort == cfg.Port {
+			return fmt.Errorf("--http-port (%d) must differ from --port (%d)", cfg.Serve.HTTPPort, cfg.Port)
+		}
+	}
+	return nil
+}
+
+func runServe(cmd *cobra.Command, args []string) error {
+	applyServeFlagOverrides(cmd, args)
+
+	if err := validateServeTLSOptions(); err != nil {
+		return err
 	}
 
 	// Resolve directory to absolute path
@@ -131,6 +178,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if cfg.Serve.CORS {
 		finalHandler = middleware.CORS()(finalHandler)
 	}
+	if cfg.Serve.HSTS {
+		finalHandler = middleware.HSTS(cfg.Serve.HSTSMaxAge)(finalHandler)
+	}
 
 	logCfg := middleware.LoggingConfig{
 		Format:  middleware.LogFormatDev,
@@ -172,5 +222,34 @@ func runServe(cmd *cobra.Command, args []string) error {
 	srvCfg.Banner = fmt.Sprintf("Serving %s on %s://%s", dir, scheme, addr)
 
 	srv := server.NewServer(srvCfg)
-	return srv.Start(context.Background())
+
+	// Coordinate the (optional) HTTP→HTTPS redirect server with the main
+	// server: a shared, cancelable context ensures that when either server
+	// stops (signal or error), the other is asked to shut down too.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if cfg.Serve.HTTPRedirect {
+		redirectAddr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Serve.HTTPPort))
+		redirectSrv := server.NewServer(&server.Config{
+			Addr:    redirectAddr,
+			Handler: server.RedirectToHTTPS(cfg.Port),
+			Banner:  fmt.Sprintf("Redirecting http://%s to %s", redirectAddr, addr),
+			// No TLSConfig: the redirect listener speaks plain HTTP.
+		})
+		go func() {
+			// A redirect-listener failure (e.g. port in use) must not crash the
+			// process; surface it on the server output instead of silently
+			// no-op'ing. Start blocks until the shared context is canceled.
+			if rerr := redirectSrv.Start(ctx); rerr != nil {
+				fmt.Fprintf(os.Stderr, "http redirect server error: %v\n", rerr)
+			}
+		}()
+	}
+
+	// Start the main HTTPS server; it blocks until a signal or error. Canceling
+	// the shared context afterward stops the redirect server too.
+	err = srv.Start(ctx)
+	cancel()
+	return err
 }

@@ -49,6 +49,46 @@ radix echo --port 9000
 radix mock --routes ./api-mocks.yml
 ```
 
+## Static File Serving
+
+The `serve` command serves a directory of static files over HTTP(S), with optional SPA routing, CORS, gzip, and cache headers.
+
+```bash
+# Serve the current directory on :8080
+radix serve
+
+# Serve a build folder with SPA fallback to index.html
+radix serve ./dist --spa --port 3000
+
+# Enable CORS and gzip
+radix serve --cors --gzip
+```
+
+### HTTPS security headers and redirect
+
+When serving over HTTPS (`--tls`), `serve` can emit an HSTS header and run a
+plain-HTTP listener that redirects to HTTPS:
+
+```bash
+# Send Strict-Transport-Security on every response (requires --tls)
+radix serve --tls --cert cert.pem --key key.pem --hsts
+
+# Custom HSTS max-age (default is 31536000 = 1 year)
+radix serve --tls --cert cert.pem --key key.pem --hsts --hsts-max-age 86400
+
+# Also run an HTTP→HTTPS redirect listener on :8080 (308 Permanent Redirect)
+radix serve --tls --cert cert.pem --key key.pem --port 8443 \
+  --http-redirect --http-port 8080
+```
+
+Notes:
+- `--hsts` and `--http-redirect` both require `--tls` (HSTS is ignored by
+  browsers over plain HTTP, so sending it would be misleading).
+- `--http-port` must differ from `--port` (the redirect listener and the HTTPS
+  server cannot share a port).
+- The redirect preserves the request method, path, and query (308 Permanent
+  Redirect).
+
 ## Reverse Proxy
 
 The `proxy` command starts a reverse proxy that forwards all incoming requests to a backend target. This is useful when your frontend dev server needs to talk to a local or remote API without dealing with CORS issues, or when you need to inject auth headers into every request.
