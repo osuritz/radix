@@ -1,0 +1,20 @@
+[
+  {
+    "id": "p-001",
+    "name": "Widget",
+    "price": 9.99,
+    "in_stock": true
+  },
+  {
+    "id": "p-002",
+    "name": "Gadget",
+    "price": 19.95,
+    "in_stock": false
+  },
+  {
+    "id": "p-003",
+    "name": "Gizmo",
+    "price": 4.50,
+    "in_stock": true
+  }
+]

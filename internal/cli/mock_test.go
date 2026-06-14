@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/osuritz/radix/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func TestMockCmd_Registered(t *testing.T) {
@@ -188,6 +189,73 @@ func TestMockCmd_InvalidInputRejected(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveRoutesArg(t *testing.T) {
+	oldCfg := cfg
+	oldRoutes := mockRoutes
+	defer func() { cfg = oldCfg; mockRoutes = oldRoutes }()
+
+	newCmd := func() *cobra.Command {
+		c := &cobra.Command{Use: "mock"}
+		c.Flags().StringVarP(&mockRoutes, "routes", "r", "", "")
+		return c
+	}
+
+	t.Run("positional only", func(t *testing.T) {
+		cfg = newMockCfg(config.MockConfig{})
+		mockRoutes = ""
+		c := newCmd()
+		if err := resolveRoutesArg(c, []string{"pos.yml"}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Mock.Routes != "pos.yml" {
+			t.Errorf("Routes = %q, want pos.yml", cfg.Mock.Routes)
+		}
+	})
+
+	t.Run("routes flag only", func(t *testing.T) {
+		cfg = newMockCfg(config.MockConfig{Routes: "flag.yml"})
+		mockRoutes = "flag.yml"
+		c := newCmd()
+		if err := c.Flags().Set("routes", "flag.yml"); err != nil {
+			t.Fatalf("set flag: %v", err)
+		}
+		if err := resolveRoutesArg(c, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Mock.Routes != "flag.yml" {
+			t.Errorf("Routes = %q, want flag.yml", cfg.Mock.Routes)
+		}
+	})
+
+	t.Run("both matching is allowed", func(t *testing.T) {
+		cfg = newMockCfg(config.MockConfig{Routes: "same.yml"})
+		mockRoutes = "same.yml"
+		c := newCmd()
+		if err := c.Flags().Set("routes", "same.yml"); err != nil {
+			t.Fatalf("set flag: %v", err)
+		}
+		if err := resolveRoutesArg(c, []string{"same.yml"}); err != nil {
+			t.Errorf("unexpected error for matching values: %v", err)
+		}
+	})
+
+	t.Run("both differing is rejected", func(t *testing.T) {
+		cfg = newMockCfg(config.MockConfig{Routes: "flag.yml"})
+		mockRoutes = "flag.yml"
+		c := newCmd()
+		if err := c.Flags().Set("routes", "flag.yml"); err != nil {
+			t.Fatalf("set flag: %v", err)
+		}
+		err := resolveRoutesArg(c, []string{"pos.yml"})
+		if err == nil {
+			t.Fatal("expected error for conflicting positional + --routes, got nil")
+		}
+		if !strings.Contains(err.Error(), "not both") {
+			t.Errorf("error = %v, want 'not both' conflict message", err)
+		}
+	})
 }
 
 func TestMockCmd_ValidPrefixAccepted(t *testing.T) {

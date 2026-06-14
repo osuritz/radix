@@ -45,9 +45,14 @@ add artificial latency, and --fail-rate to inject random failures.
 
 Custom routes support exact, :param, regex:, and trailing /* glob paths,
 templated response bodies ({{.params.id}}, {{uuid}}, etc.), per-route delays,
-and a 404 or proxy fallback for unmatched requests. With --watch the routes
-file is reloaded on change (a broken edit is rejected; the previous good
-config keeps serving).
+and a 404 or proxy fallback for unmatched requests. regex: patterns use Go
+regexp semantics and are NOT auto-anchored; use ^...$ to match the whole path.
+
+With --watch the routes file is reloaded on change: routes, the fallback, and
+the global latency/fail-rate settings take effect on save (a broken edit is
+rejected; the previous good config keeps serving). CORS is applied once at
+startup and is not hot-reloaded. Explicitly-set CLI flags always win over the
+file. Pass the routes file positionally or via --routes (not both).
 
 Examples:
   radix mock                                  # Built-in endpoints on :8080
@@ -111,30 +116,15 @@ func applyMockFlags(cmd *cobra.Command) {
 func runMock(cmd *cobra.Command, args []string) error {
 	applyMockFlags(cmd)
 
-	// A positional config-file argument is shorthand for --routes.
-	if len(args) > 0 {
-		cfg.Mock.Routes = args[0]
+	// Resolve the routes file from either the positional arg or --routes. If both
+	// are given and differ, it is ambiguous which the user meant, so reject it
+	// rather than silently picking one.
+	if err := resolveRoutesArg(cmd, args); err != nil {
+		return err
 	}
 
-	// A long-lived context drives both graceful shutdown (via the server's own
-	// signal handling) and the routes-file watcher goroutine, which stops when
-	// this context is canceled.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Load custom routes (if any) and merge file settings under CLI flags. CLI
-	// flags win whenever the corresponding flag was explicitly set.
-	var routesStore *server.RoutesStore
-	if cfg.Mock.Routes != "" {
-		store, err := buildRoutesStore(ctx, cmd)
-		if err != nil {
-			return err
-		}
-		routesStore = store
-	}
-
-	// Validate fail-rate, fail-status, and prefix at the CLI boundary (after the
-	// routes file may have supplied settings, so file values are validated too).
+	// Validate the CLI-supplied values (fail-rate, fail-status, prefix, latency)
+	// up front so any value baked into the routes store is already validated.
 	if r := cfg.Mock.FailRate; math.IsNaN(r) || math.IsInf(r, 0) || r < 0 || r > 100 {
 		return fmt.Errorf("invalid --fail-rate %g: must be between 0 and 100", r)
 	}
@@ -156,6 +146,27 @@ func runMock(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A long-lived context drives both graceful shutdown (via the server's own
+	// signal handling) and the routes-file watcher goroutine, which stops when
+	// this context is canceled.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Load custom routes (if any). The store overlays explicitly-set CLI flags
+	// over the file values so CLI flags win; the effective merged settings are
+	// then validated below so file-supplied fail-rate/fail-status are checked too.
+	var routesStore *server.RoutesStore
+	if cfg.Mock.Routes != "" {
+		store, sErr := buildRoutesStore(ctx, cmd)
+		if sErr != nil {
+			return sErr
+		}
+		if vErr := validateEffectiveSettings(store.Load().Settings()); vErr != nil {
+			return vErr
+		}
+		routesStore = store
+	}
+
 	mockCfg := server.MockConfig{
 		Builtin:       cfg.Mock.Builtin,
 		Prefix:        cfg.Mock.Prefix,
@@ -167,16 +178,19 @@ func runMock(cmd *cobra.Command, args []string) error {
 
 	// Build the mock handler: routed (custom routes -> built-ins -> fallback)
 	// when a routes file is configured, otherwise the built-ins-only handler.
+	//
+	// The routed handler applies global latency/fail-rate itself, reading the
+	// effective values from the store snapshot per request so they hot-reload
+	// with the file (CLI overrides are baked into the store by buildRoutesStore).
+	// It must therefore NOT be wrapped in WithLatencyAndFailures here, or latency
+	// and failures would be applied twice.
 	var mockHandler http.Handler
 	if routesStore != nil {
-		routed := server.NewRoutedHandler(server.RoutedHandlerConfig{
+		mockHandler = server.NewRoutedHandler(server.RoutedHandlerConfig{
 			Store:   routesStore,
 			Builtin: cfg.Mock.Builtin,
 			Prefix:  cfg.Mock.Prefix,
 		})
-		// Apply global latency/fail-rate around the routed handler, matching the
-		// built-ins-only behavior.
-		mockHandler = server.WithLatencyAndFailures(routed, mockCfg)
 	} else {
 		mockHandler = server.NewMockHandler(mockCfg)
 	}
@@ -251,52 +265,113 @@ func runMock(cmd *cobra.Command, args []string) error {
 	return srv.Start(ctx)
 }
 
-// buildRoutesStore loads the configured routes file, merges its settings under
-// the CLI flags (CLI wins when a flag was explicitly set), seeds an atomic
-// store, and — when --watch is set — starts the hot-reload watcher bound to ctx.
+// resolveRoutesArg reconciles the positional config-file argument with the
+// --routes flag. A positional argument is shorthand for --routes; if both are
+// explicitly provided and disagree it is ambiguous which the user meant, so an
+// error is returned. Otherwise whichever was set is used (--routes when it was
+// explicitly changed, else the positional arg).
+func resolveRoutesArg(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil // only --routes (if any) applies; already in cfg.Mock.Routes
+	}
+	positional := args[0]
+	if cmd.Flags().Changed("routes") && mockRoutes != positional {
+		return fmt.Errorf(
+			"specify the routes file either positionally (%q) or via --routes (%q), not both",
+			positional, mockRoutes)
+	}
+	cfg.Mock.Routes = positional
+	return nil
+}
+
+// buildRoutesStore loads the configured routes file, installs a CLI-override
+// overlay so explicitly-set flags win over the file (and survive hot reloads),
+// seeds an atomic store, and — when --watch is set — starts the hot-reload
+// watcher bound to ctx. It also reflects the effective CORS setting back into
+// cfg so the startup CORS middleware sees the merged value.
 func buildRoutesStore(ctx context.Context, cmd *cobra.Command) (*server.RoutesStore, error) {
 	compiled, err := server.LoadRoutes(cfg.Mock.Routes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load routes file %q: %w", cfg.Mock.Routes, err)
 	}
 
-	settings := compiled.Settings()
-	mergeRouteSettings(cmd, &settings)
-
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(cmd.OutOrStdout(), format+"\n", args...)
 	}
 	store := server.NewRoutesStore(cfg.Mock.Routes, compiled, logf)
 
+	// Bake CLI overrides into the store's settings on every (re)load so CLI flags
+	// always win over the file and survive an edit to the watched settings block.
+	store.SetSettingsOverride(cliSettingsOverride(cmd))
+
+	// Reflect the effective CORS value (file unless a CLI flag overrode it) into
+	// cfg for the startup CORS middleware; CORS is not hot-reloaded.
+	if !cmd.Flags().Changed("cors") {
+		cfg.Mock.CORS = store.Load().Settings().CORS
+	}
+
 	if cfg.Mock.Watch {
 		if watchErr := store.Watch(ctx); watchErr != nil {
 			return nil, fmt.Errorf("failed to start routes watcher: %w", watchErr)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Watching %s for changes\n", cfg.Mock.Routes)
+		fmt.Fprintf(cmd.OutOrStdout(), "Watching %s for changes (routes, fallback, latency, fail-rate; CORS is set at startup)\n", cfg.Mock.Routes)
 	}
 
 	return store, nil
 }
 
-// mergeRouteSettings applies routes-file settings to the active config for any
-// option whose CLI flag was not explicitly set. CLI flags therefore take
-// precedence over the file, while the file overrides the built-in defaults.
-func mergeRouteSettings(cmd *cobra.Command, s *server.RouteSettings) {
-	if !cmd.Flags().Changed("latency") && s.Latency > 0 {
-		cfg.Mock.Latency = s.Latency.String()
+// cliSettingsOverride returns a function that overlays explicitly-set CLI flags
+// onto a freshly-loaded RouteSettings. Precedence is CLI flag (when Changed) >
+// file setting > built-in default: only flags the user actually set replace the
+// file value, so the store always holds the effective settings. It is applied to
+// the initial config and to every hot reload.
+func cliSettingsOverride(cmd *cobra.Command) func(*server.RouteSettings) {
+	changed := func(name string) bool { return cmd.Flags().Changed(name) }
+	return func(s *server.RouteSettings) {
+		if changed("latency") {
+			s.Latency = mockLatencyDuration()
+		}
+		if changed("latency-jitter") {
+			s.LatencyJitter = mockLatencyJitterDuration()
+		}
+		if changed("fail-rate") {
+			s.FailRate = mockFailRate
+		}
+		if changed("fail-status") {
+			s.FailStatus = mockFailStatus
+		}
+		if changed("cors") {
+			s.CORS = mockCORS
+		}
 	}
-	if !cmd.Flags().Changed("latency-jitter") && s.LatencyJitter > 0 {
-		cfg.Mock.LatencyJitter = s.LatencyJitter.String()
+}
+
+// mockLatencyDuration parses the --latency flag value; a parse error cannot
+// occur here because runMock validated it before the store was built, but on
+// the off chance it does the value is treated as zero.
+func mockLatencyDuration() time.Duration {
+	d, _ := time.ParseDuration(mockLatency)
+	return d
+}
+
+// mockLatencyJitterDuration parses the --latency-jitter flag value (see
+// mockLatencyDuration for the error rationale).
+func mockLatencyJitterDuration() time.Duration {
+	d, _ := time.ParseDuration(mockLatencyJitter)
+	return d
+}
+
+// validateEffectiveSettings checks the merged routes-store settings (file values
+// overlaid with CLI flags) so a fail-rate/fail-status supplied only by the file
+// is validated too. Latency negativity is already validated during compilation.
+func validateEffectiveSettings(s server.RouteSettings) error {
+	if r := s.FailRate; math.IsNaN(r) || math.IsInf(r, 0) || r < 0 || r > 100 {
+		return fmt.Errorf("invalid fail_rate %g: must be between 0 and 100", r)
 	}
-	if !cmd.Flags().Changed("fail-rate") && s.FailRate > 0 {
-		cfg.Mock.FailRate = s.FailRate
+	if c := s.FailStatus; c < 200 || c > 599 {
+		return fmt.Errorf("invalid fail_status %d: must be between 200 and 599", c)
 	}
-	if !cmd.Flags().Changed("fail-status") && s.FailStatus != 0 {
-		cfg.Mock.FailStatus = s.FailStatus
-	}
-	if !cmd.Flags().Changed("cors") && s.CORS {
-		cfg.Mock.CORS = true
-	}
+	return nil
 }
 
 // validateMockPrefix rejects a --prefix that is not a simple path-segment

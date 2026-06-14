@@ -88,7 +88,9 @@ routes:
       status: 200
       body: '{"query":"{{.query.q}}","results":[]}'
 
-  # Regex path matching (regex: prefix).
+  # Regex path matching (regex: prefix). Go regexp semantics: patterns are NOT
+  # auto-anchored, so use ^...$ to match the whole path (as below); without the
+  # anchors the pattern would match if found anywhere in the path.
   - path: "regex:^/api/v[0-9]+/users$"
     method: GET
     response:

@@ -171,8 +171,13 @@ radix mock --fail-rate 10 --fail-status 503
 ### Custom routes (YAML)
 
 Provide a YAML routes file to define custom routes that take precedence over the
-built-ins. Pass it positionally (`radix mock <file>`) or via `--routes`/`-r`,
-and add `--watch`/`-w` to hot-reload on save:
+built-ins. Pass it positionally (`radix mock <file>`) or via `--routes`/`-r`
+(giving both with different values is an error), and add `--watch`/`-w` to
+hot-reload on save. `--watch` reloads the routes, the `fallback`, and the global
+`latency`/`latency_jitter`/`fail_rate`/`fail_status` settings; a broken edit is
+rejected and the previous good config keeps serving. `cors` is applied once at
+startup and is **not** hot-reloaded. Explicitly-set CLI flags always win over the
+file and survive reloads:
 
 ```bash
 # Serve custom routes (positional or --routes)
@@ -208,6 +213,10 @@ routes:
 **Matching priority (first match wins):** exact+method → exact+any-method →
 `:param` → `regex:` → `/*` glob → built-in endpoint → fallback (`404`/`proxy`).
 
+`regex:` patterns use Go [`regexp`](https://pkg.go.dev/regexp) semantics and are
+**not** auto-anchored — they match if found anywhere in the path. Use `^...$` to
+match the whole path (e.g. `regex:^/api/v[0-9]+/x$`).
+
 **Templating** uses idiomatic Go `text/template` syntax. Request data is
 dot-accessible: `{{.method}}`, `{{.path}}`, `{{.params.id}}`, `{{.query.q}}`,
 `{{.headers.Authorization}}`, `{{.body.field}}` (parsed JSON). Header names
@@ -226,7 +235,7 @@ A malformed template or render error yields a `500` (the server stays up).
 | `--builtin` | `true` | Register the built-in httpbin-style endpoints |
 | `--prefix` | | Mount built-ins under a path prefix (e.g. `/_test` → `/_test/get`) |
 | `--routes`, `-r` | | YAML routes file defining custom routes (also positional) |
-| `--watch`, `-w` | `false` | Reload the routes file on change (hot-reload) |
+| `--watch`, `-w` | `false` | Reload the routes file on change (routes, fallback, latency, fail-rate; CORS is set at startup) |
 | `--latency` | `0` | Fixed artificial latency (e.g. `200ms`, `1s`) |
 | `--latency-jitter` | `0` | Random jitter added to latency |
 | `--fail-rate` | `0` | Random failure rate, percentage 0-100 |
@@ -235,7 +244,7 @@ A malformed template or render error yields a `500` (the server stays up).
 | `--port` | `8080` | Port to listen on |
 | `--tls` | `false` | Serve the mock over HTTPS |
 
-> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags.
+> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags. A file value of `cors: false` or `fail_rate: 0` is honored as written (an explicit zero/false is distinct from an omitted field).
 
 ## Development
 

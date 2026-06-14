@@ -398,6 +398,68 @@ func TestRoutes_FilePathTraversalRejected(t *testing.T) {
 	}
 }
 
+func TestRoutes_FileSymlinkEscapeRejected(t *testing.T) {
+	dir := t.TempDir()
+	// A secret file outside the routes dir, and a symlink INSIDE the routes dir
+	// pointing at it. A purely lexical guard would clean to a path inside dir and
+	// then ReadFile would follow the symlink, leaking the external content.
+	parent := filepath.Dir(dir)
+	secret := filepath.Join(parent, "symlink-secret.txt")
+	if err := os.WriteFile(secret, []byte("TOPSECRET"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	defer func() { _ = os.Remove(secret) }()
+
+	link := filepath.Join(dir, "leak.json")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	const src = `
+routes:
+  - path: /leak
+    response:
+      file: ./leak.json
+`
+	store := newStore(t, src, dir)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/leak", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for symlink escape", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "TOPSECRET") {
+		t.Fatal("symlink escape leaked external file contents")
+	}
+}
+
+func TestRoutes_FileSymlinkWithinBaseAllowed(t *testing.T) {
+	// A symlink that stays within the routes dir must still resolve and serve.
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	if err := os.WriteFile(target, []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "alias.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	const src = `
+routes:
+  - path: /aliased
+    response:
+      file: ./alias.json
+`
+	store := newStore(t, src, dir)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/aliased", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"ok":true}` {
+		t.Errorf("status=%d body=%q, want 200 {\"ok\":true} for in-base symlink", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRoutes_PerRouteDelayApplied(t *testing.T) {
 	const src = `
 routes:
@@ -545,6 +607,119 @@ routes:
 	}
 }
 
+func TestCompileRoutes_SettingsPointerSemantics(t *testing.T) {
+	// Explicit zero/false values in the file must be honored as-is (not treated
+	// as "absent"), while an omitted fail_status falls back to the 500 default.
+	const explicit = `
+settings:
+  fail_rate: 0
+  fail_status: 503
+  cors: false
+  latency: 0
+routes: []
+`
+	c, err := CompileRoutes([]byte(explicit), t.TempDir())
+	if err != nil {
+		t.Fatalf("CompileRoutes: %v", err)
+	}
+	s := c.Settings()
+	if s.FailRate != 0 || s.FailStatus != 503 || s.CORS != false || s.Latency != 0 {
+		t.Errorf("explicit settings = %+v, want fail_rate=0 fail_status=503 cors=false latency=0", s)
+	}
+
+	// Absent fail_status defaults to 500.
+	c2, err := CompileRoutes([]byte("routes: []\n"), t.TempDir())
+	if err != nil {
+		t.Fatalf("CompileRoutes (empty): %v", err)
+	}
+	if got := c2.Settings().FailStatus; got != http.StatusInternalServerError {
+		t.Errorf("absent fail_status = %d, want 500 default", got)
+	}
+}
+
+func TestRoutesStore_SettingsOverridePrecedence(t *testing.T) {
+	// File sets cors:true and fail_rate:50; an override emulating an explicit CLI
+	// flag must win, while leaving an unset field (latency) at the file value.
+	const src = `
+settings:
+  cors: true
+  fail_rate: 50
+  latency: 200ms
+routes: []
+`
+	store := newStore(t, src, t.TempDir())
+	// Sanity: file values present before override.
+	if s := store.Load().Settings(); !s.CORS || s.FailRate != 50 || s.Latency != 200*time.Millisecond {
+		t.Fatalf("pre-override settings = %+v", s)
+	}
+
+	// Emulate `--cors=false --fail-rate=0` while leaving latency unset.
+	store.SetSettingsOverride(func(s *RouteSettings) {
+		s.CORS = false
+		s.FailRate = 0
+	})
+	s := store.Load().Settings()
+	if s.CORS {
+		t.Errorf("CORS = true, want false (override should win over file true)")
+	}
+	if s.FailRate != 0 {
+		t.Errorf("FailRate = %v, want 0 (override should win over file 50)", s.FailRate)
+	}
+	if s.Latency != 200*time.Millisecond {
+		t.Errorf("Latency = %v, want 200ms (unset override must not clobber file value)", s.Latency)
+	}
+}
+
+func TestRoutesStore_ReloadHotReloadsSettings(t *testing.T) {
+	// Editing latency/fail_rate in the watched file takes effect after Reload,
+	// and a CLI override (baked via SetSettingsOverride) survives the reload.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routes.yml")
+	write := func(body string) {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	write("settings:\n  fail_rate: 0\n  latency: 0\nroutes:\n  - path: /v\n    response: { status: 200, body: \"v1\" }\n")
+	compiled, err := LoadRoutes(path)
+	if err != nil {
+		t.Fatalf("LoadRoutes: %v", err)
+	}
+	store := NewRoutesStore(path, compiled, nil)
+	// CLI override: fail-status pinned to 503; latency/fail-rate left to file.
+	store.SetSettingsOverride(func(s *RouteSettings) { s.FailStatus = 503 })
+
+	if s := store.Load().Settings(); s.FailRate != 0 || s.Latency != 0 || s.FailStatus != 503 {
+		t.Fatalf("initial effective settings = %+v", s)
+	}
+
+	// Edit the file to add latency + a 100% fail-rate; Reload must apply them and
+	// keep the CLI override (fail_status 503).
+	write("settings:\n  fail_rate: 100\n  latency: 25ms\nroutes:\n  - path: /v\n    response: { status: 200, body: \"v1\" }\n")
+	if err := store.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	s := store.Load().Settings()
+	if s.FailRate != 100 {
+		t.Errorf("FailRate = %v, want 100 (edited file value applied)", s.FailRate)
+	}
+	if s.Latency != 25*time.Millisecond {
+		t.Errorf("Latency = %v, want 25ms (edited file value applied)", s.Latency)
+	}
+	if s.FailStatus != 503 {
+		t.Errorf("FailStatus = %d, want 503 (CLI override must survive reload)", s.FailStatus)
+	}
+
+	// The routed handler reads settings live: a 100% fail-rate now short-circuits
+	// every request with the overridden 503.
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (hot-reloaded fail_rate + override fail_status)", rec.Code)
+	}
+}
+
 func TestRoutesStore_ManualReload(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "routes.yml")
@@ -591,6 +766,11 @@ func TestRoutesStore_ManualReload(t *testing.T) {
 }
 
 func TestRoutesStore_WatchHotReload(t *testing.T) {
+	// Positive path only: a valid edit to the watched file is eventually applied.
+	// The "invalid edit keeps previous good config" assertion is covered
+	// deterministically by TestRoutesStore_ManualReload (and
+	// TestRoutesStore_ReloadKeepsPreviousOnInvalid) via the direct Reload path,
+	// not the timing-sensitive watcher, to avoid flakes.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "routes.yml")
 	if err := os.WriteFile(path, []byte("routes:\n  - path: /v\n    response: { status: 200, body: \"v1\" }\n"), 0o600); err != nil {
@@ -615,22 +795,49 @@ func TestRoutesStore_WatchHotReload(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	// Modify the file; the watcher should reload it.
+	// Modify the file; the watcher should eventually reload it.
 	if err := os.WriteFile(path, []byte("routes:\n  - path: /v\n    response: { status: 200, body: \"v2\" }\n"), 0o600); err != nil {
 		t.Fatalf("write v2: %v", err)
 	}
 	if !eventually(t, 2*time.Second, func() bool { return body() == "v2" }) {
 		t.Errorf("watcher did not reload to v2 within timeout (last body %q)", body())
 	}
+}
 
-	// Write an invalid file; the watcher must keep the previous good config.
+// TestRoutesStore_ReloadKeepsPreviousOnInvalid asserts deterministically (via the
+// direct Reload path, no timing) that an invalid edit is rejected and the
+// previous good configuration keeps serving.
+func TestRoutesStore_ReloadKeepsPreviousOnInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routes.yml")
+	if err := os.WriteFile(path, []byte("routes:\n  - path: /v\n    response: { status: 200, body: \"v1\" }\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	compiled, err := LoadRoutes(path)
+	if err != nil {
+		t.Fatalf("LoadRoutes: %v", err)
+	}
+	store := NewRoutesStore(path, compiled, nil)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	body := func() string {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v", nil))
+		return rec.Body.String()
+	}
+	if body() != "v1" {
+		t.Fatalf("initial body = %q, want v1", body())
+	}
+
+	// Replace with an invalid file and reload; Reload must error and the previous
+	// good config (v1) must keep serving.
 	if err := os.WriteFile(path, []byte("routes: [::::"), 0o600); err != nil {
 		t.Fatalf("write bad: %v", err)
 	}
-	// Give the watcher a moment to (attempt to) process the bad write.
-	time.Sleep(200 * time.Millisecond)
-	if got := body(); got != "v2" {
-		t.Errorf("after invalid write body = %q, want v2 (kept previous good config)", got)
+	if err := store.Reload(); err == nil {
+		t.Fatal("Reload of invalid file: expected error, got nil")
+	}
+	if got := body(); got != "v1" {
+		t.Errorf("after invalid reload body = %q, want v1 (previous config kept)", got)
 	}
 }
 

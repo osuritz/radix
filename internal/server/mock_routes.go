@@ -47,26 +47,37 @@ const (
 // they unmarshal into nothing and have no effect. See the package docs / the
 // mock command help for the supported subset.
 type RoutesFile struct {
-	Settings RouteSettings  `yaml:"settings"`
+	Settings settingsYAML   `yaml:"settings"`
 	Routes   []RouteDefYAML `yaml:"routes"`
 }
 
-// RouteSettings holds global mock settings parsed from the routes file. CLI
-// flags take precedence over these when the corresponding flag is explicitly
-// set; merging is performed by the CLI layer.
-type RouteSettings struct {
-	Latency       time.Duration  `yaml:"-"`
-	LatencyJitter time.Duration  `yaml:"-"`
-	FailRate      float64        `yaml:"fail_rate"`
-	FailStatus    int            `yaml:"fail_status"`
-	CORS          bool           `yaml:"cors"`
+// settingsYAML is the on-disk schema for the global `settings:` block. Every
+// scalar is a pointer so that an absent field (nil) is distinguishable from an
+// explicit zero/false value: this lets a file `cors: false` or `fail_rate: 0`
+// override an otherwise-on default, while an omitted field leaves the
+// CLI/default value untouched. The pointers are resolved into the concrete
+// RouteSettings by normalizeSettings.
+type settingsYAML struct {
+	Latency       *yamlDuration  `yaml:"latency"`
+	LatencyJitter *yamlDuration  `yaml:"latency_jitter"`
+	FailRate      *float64       `yaml:"fail_rate"`
+	FailStatus    *int           `yaml:"fail_status"`
+	CORS          *bool          `yaml:"cors"`
 	Fallback      FallbackConfig `yaml:"fallback"`
+}
 
-	// RawLatency and RawLatencyJitter capture the YAML values (duration strings
-	// like "200ms" or bare numbers of seconds) and are converted into the typed
-	// fields above by normalizeSettings.
-	RawLatency       yamlDuration `yaml:"latency"`
-	RawLatencyJitter yamlDuration `yaml:"latency_jitter"`
+// RouteSettings holds the effective global mock settings used at request time.
+// It is the resolved form of settingsYAML after defaults are filled and CLI
+// overrides are merged. CLI flags take precedence over file settings, which in
+// turn take precedence over the built-in defaults; merging is performed by the
+// CLI layer via the store's reload overrides.
+type RouteSettings struct {
+	Latency       time.Duration
+	LatencyJitter time.Duration
+	FailRate      float64
+	FailStatus    int
+	CORS          bool
+	Fallback      FallbackConfig
 }
 
 // FallbackConfig configures the unmatched-request fallback behavior.
@@ -199,10 +210,10 @@ func CompileRoutes(data []byte, baseDir string) (*CompiledRoutes, error) {
 		return nil, fmt.Errorf("mock routes: parse YAML: %w", err)
 	}
 
-	if err := normalizeSettings(&rf.Settings); err != nil {
+	settings, err := normalizeSettings(&rf.Settings)
+	if err != nil {
 		return nil, err
 	}
-	settings := rf.Settings
 
 	compiled := make([]compiledRoute, 0, len(rf.Routes))
 	for i := range rf.Routes {
@@ -227,32 +238,52 @@ func CompileRoutes(data []byte, baseDir string) (*CompiledRoutes, error) {
 	return &CompiledRoutes{routes: compiled, settings: settings, baseDir: abs}, nil
 }
 
-// normalizeSettings validates and fills defaults on the parsed settings,
-// mutating s in place.
-func normalizeSettings(s *RouteSettings) error {
-	s.Latency = s.RawLatency.Duration()
-	s.LatencyJitter = s.RawLatencyJitter.Duration()
-	if s.Latency < 0 || s.LatencyJitter < 0 {
-		return errors.New("mock routes: settings latency and latency_jitter must not be negative")
+// normalizeSettings validates the parsed file settings and resolves them into
+// the effective RouteSettings. Fields the file leaves absent (nil) keep their
+// built-in defaults here; the CLI layer later overlays any explicitly-set flags
+// (see RoutesStore overrides), so the precedence is CLI > file > default. The
+// fail_status default of 500 is therefore only a fallback for when neither the
+// file nor a CLI flag supplies one.
+func normalizeSettings(s *settingsYAML) (RouteSettings, error) {
+	out := RouteSettings{
+		FailStatus: http.StatusInternalServerError,
+		Fallback:   s.Fallback,
 	}
-	if s.FailStatus == 0 {
-		s.FailStatus = http.StatusInternalServerError
+
+	if s.Latency != nil {
+		out.Latency = s.Latency.Duration()
 	}
-	if s.Fallback.Type == "" {
-		s.Fallback.Type = FallbackNotFound
+	if s.LatencyJitter != nil {
+		out.LatencyJitter = s.LatencyJitter.Duration()
 	}
-	switch s.Fallback.Type {
+	if out.Latency < 0 || out.LatencyJitter < 0 {
+		return RouteSettings{}, errors.New("mock routes: settings latency and latency_jitter must not be negative")
+	}
+	if s.FailRate != nil {
+		out.FailRate = *s.FailRate
+	}
+	if s.FailStatus != nil && *s.FailStatus != 0 {
+		out.FailStatus = *s.FailStatus
+	}
+	if s.CORS != nil {
+		out.CORS = *s.CORS
+	}
+
+	if out.Fallback.Type == "" {
+		out.Fallback.Type = FallbackNotFound
+	}
+	switch out.Fallback.Type {
 	case FallbackNotFound:
 		// ok
 	case FallbackProxy:
-		if err := validateProxyTarget(s.Fallback.ProxyTarget); err != nil {
-			return err
+		if err := validateProxyTarget(out.Fallback.ProxyTarget); err != nil {
+			return RouteSettings{}, err
 		}
 	default:
-		return fmt.Errorf("mock routes: invalid fallback.type %q (must be %q or %q)",
-			s.Fallback.Type, FallbackNotFound, FallbackProxy)
+		return RouteSettings{}, fmt.Errorf("mock routes: invalid fallback.type %q (must be %q or %q)",
+			out.Fallback.Type, FallbackNotFound, FallbackProxy)
 	}
-	return nil
+	return out, nil
 }
 
 // validateProxyTarget ensures a fallback proxy target is a usable http/https URL.
@@ -296,6 +327,9 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 
 	switch {
 	case strings.HasPrefix(path, regexRoutePrefix):
+		// regex: patterns use Go regexp (regexp.MatchString) semantics and are
+		// NOT auto-anchored — they match if the pattern is found anywhere in the
+		// path. Use ^...$ to match the whole path (e.g. "regex:^/api/v[0-9]+$").
 		expr := strings.TrimPrefix(path, regexRoutePrefix)
 		re, err := regexp.Compile(expr)
 		if err != nil {
@@ -545,19 +579,48 @@ func (cr *compiledRoute) renderFileBody(data map[string]any, baseDir string) ([]
 }
 
 // resolveWithinBase cleans rel against base and verifies the result does not
-// escape base, defeating "../" path-traversal attempts.
+// escape base, defeating both "../" path-traversal and symlink-escape attempts.
+//
+// The lexical check (clean + prefix) blocks "../" and the /a/b vs /a/bc prefix
+// pitfall, but a symlink inside base pointing outside it would still be followed
+// by os.ReadFile, leaking external content. To close that, the real (symlink-
+// resolved) paths of base and the target are compared: EvalSymlinks resolves
+// every component. When the target does not yet exist (EvalSymlinks errors), its
+// parent directory is resolved instead and the filename re-joined, so a
+// not-yet-created file is handled gracefully while a symlinked parent is still
+// caught.
 func resolveWithinBase(base, rel string) (string, error) {
 	absBase, err := filepath.Abs(base)
 	if err != nil {
 		return "", fmt.Errorf("resolve base dir: %w", err)
 	}
-	joined := filepath.Join(absBase, rel)
-	cleaned := filepath.Clean(joined)
-	// Ensure cleaned is absBase itself or sits under absBase + separator.
-	if cleaned != absBase && !strings.HasPrefix(cleaned, absBase+string(os.PathSeparator)) {
+	cleaned := filepath.Clean(filepath.Join(absBase, rel))
+
+	// Resolve the base dir's real path once; all containment checks are made
+	// against it so a symlinked base directory is itself handled correctly.
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return "", fmt.Errorf("resolve routes directory: %w", err)
+	}
+
+	realPath, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve file path %q: %w", rel, err)
+		}
+		// Target does not exist yet: resolve its parent and re-join the name so a
+		// symlinked parent directory still cannot escape base.
+		realParent, perr := filepath.EvalSymlinks(filepath.Dir(cleaned))
+		if perr != nil {
+			return "", fmt.Errorf("resolve file path %q: %w", rel, perr)
+		}
+		realPath = filepath.Join(realParent, filepath.Base(cleaned))
+	}
+
+	if realPath != realBase && !strings.HasPrefix(realPath, realBase+string(os.PathSeparator)) {
 		return "", fmt.Errorf("file path %q escapes the routes directory", rel)
 	}
-	return cleaned, nil
+	return realPath, nil
 }
 
 // execTemplate runs a parsed template against data and returns the rendered
