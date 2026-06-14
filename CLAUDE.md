@@ -39,11 +39,11 @@ Provides local development HTTP capabilities:
 
 ### Project Status
 - **Phase**: Feature-complete for the alpha/beta (v0.1.0-alpha.1)
-- **Completed**: CLI framework, config system, metrics infrastructure, CI/CD
-- **Completed**: all commands — `serve`, `proxy`, `echo`, `mock` (built-in
-  httpbin-style endpoints + custom YAML routes + hot-reload), `gencert`,
-  `version`, `validate` — plus TLS/HTTPS support and the middleware suite
-  (logging, metrics, CORS, gzip, auth header injection, security/HSTS). All are
+- **Completed**: CLI framework, config system, metrics infrastructure, CI/CD,
+  and all commands — `serve`, `proxy`, `echo`, `mock` (built-in httpbin-style
+  endpoints + custom YAML routes + hot-reload), `gencert`, `version`,
+  `validate` — plus TLS/HTTPS support and the middleware suite (logging,
+  metrics, CORS, gzip, auth header injection, security/HSTS). All are
   implemented and tested.
 - **Remaining (Phase 9 polish)**: release hardening (binary signing, distribution
   channels), expanded integration/benchmark coverage, and a few nice-to-haves

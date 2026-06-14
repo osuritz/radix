@@ -241,6 +241,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("proxy.timeout", "30s")
 	v.SetDefault("proxy.websocket", false)
 	v.SetDefault("proxy.tls_skip_verify", false)
+	v.SetDefault("proxy.cors", false)
 	// Immediate flush by default: best for a dev proxy serving agent/chat SSE.
 	v.SetDefault("proxy.flush_interval", -1*time.Nanosecond)
 

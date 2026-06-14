@@ -203,10 +203,11 @@ Additional flags:
 - Mutual TLS (mTLS) for backend connections
 - Certificate pinning (optional)
 
-Additional flags:
-- `--backend-ca`: CA for verifying backend certificates
-- `--backend-cert`: Client cert for backend mTLS
-- `--backend-key`: Client key for backend mTLS
+Additional settings (config keys only — set under `proxy:` in the config file,
+not as CLI flags):
+- `backend_ca`: CA for verifying backend certificates
+- `backend_cert`: Client cert for backend mTLS
+- `backend_key`: Client key for backend mTLS
 
 #### 3.3 Echo Command TLS
 - HTTPS echo server
@@ -490,7 +491,6 @@ Flags:
 - `--dir, -d`: Directory to serve (default: current directory)
 - `--index`: Index file (default: index.html)
 - `--spa`: SPA mode (always serve index.html for 404s)
-- `--browse, -b`: Open browser automatically
 - `--cors`: Enable CORS
 - `--gzip`: Enable gzip compression
 - `--cache`: Cache-Control header value
@@ -510,13 +510,13 @@ radix proxy [target] [flags]
 Purpose: Reverse proxy to backend services
 
 Flags:
-- `--target, -t`: Target URL (required)
+- `--target`: Target URL (or pass as a positional arg; required)
 - `--rewrite`: Path rewrite rules (e.g., /api=/v1)
 - `--strip-prefix`: Remove path prefix before forwarding
 - `--timeout`: Request timeout (default: 30s)
 - `--websocket`: Enable WebSocket proxying
 - `--tls-skip-verify`: Skip TLS verification (dev only)
-- `--headers`: Add/modify headers
+- `--header`: Add/modify a header (repeatable, "Key: Value")
 
 Features:
 - WebSocket support
@@ -536,7 +536,7 @@ Flags:
 - `--delay`: Response delay (e.g., 500ms, 2s)
 - `--status`: Default status code (default: 200)
 - `--body`: Custom response body
-- `--headers`: Custom response headers
+- `--header`: Custom response header (repeatable, "Key: Value")
 
 Features:
 - Return full request details (method, headers, body, query, etc.)

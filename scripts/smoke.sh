@@ -71,9 +71,11 @@ info() {
 }
 
 # assert_contains <description> <haystack> <needle>
+# Uses a here-string (not a pipe) so grep -q exiting early cannot SIGPIPE a
+# writer under `set -o pipefail` and produce a spurious FAIL.
 assert_contains() {
   local desc="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if grep -qF -- "$needle" <<<"$haystack"; then
     pass "$desc"
   else
     fail "$desc" "expected to find: $needle"
@@ -93,21 +95,37 @@ assert_eq() {
 # --- Process management -----------------------------------------------------
 
 # start_bg <logfile> <command...> : start a background process, record its pid.
+# Sets the global LAST_PID to the new child's pid (rather than echoing it, so the
+# PIDS array used by cleanup is mutated in the main shell, not a subshell) and
+# appends it to PIDS for teardown.
+LAST_PID=""
 start_bg() {
   local logfile="$1"; shift
   "$@" >"$logfile" 2>&1 &
-  local pid=$!
-  PIDS+=("$pid")
-  echo "$pid"
+  LAST_PID=$!
+  PIDS+=("$LAST_PID")
 }
 
-# wait_ready <url> : poll a URL until it responds (any HTTP status) or time out.
+# wait_ready <url> <pid> [expect_substr] : poll a URL until OUR server answers.
+#
+# Hardening over a naive "any HTTP response" probe:
+#   - <pid> is the child we just started; if it has died we fail fast instead of
+#     polling (and never risk probing some unrelated process on a colliding port).
+#   - [expect_substr], when given, must appear in the response body before we
+#     consider the server ready — this proves it's OUR server (e.g. /_health),
+#     not whatever else might be listening on that port.
 wait_ready() {
-  local url="$1"
-  local i
+  local url="$1" pid="$2" expect="${3:-}"
+  local i body
   for i in $(seq 1 100); do
-    if curl -sS -o /dev/null --max-time 2 "$url" 2>/dev/null; then
-      return 0
+    # Fail fast if the server we started has already exited.
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+    if body="$(curl -sS --max-time 2 "$url" 2>/dev/null)"; then
+      if [ -z "$expect" ] || grep -qF -- "$expect" <<<"$body"; then
+        return 0
+      fi
     fi
     sleep 0.1
   done
@@ -124,7 +142,9 @@ cleanup() {
   done
   rm -rf "$TMPDIR_SMOKE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 # --- Build ------------------------------------------------------------------
 
@@ -181,14 +201,17 @@ mkdir -p "$SERVE_DIR"
 echo "<html><body>radix smoke index</body></html>" >"$SERVE_DIR/index.html"
 
 start_bg "$TMPDIR_SMOKE/serve.log" \
-  "$BIN" serve "$SERVE_DIR" --host "$HOST" --port "$PORT_SERVE" --spa >/dev/null
-if wait_ready "http://$HOST:$PORT_SERVE/"; then
-  body="$(curl -sS "http://$HOST:$PORT_SERVE/" || true)"
-  assert_contains "serve returns index.html" "$body" "radix smoke index"
+  "$BIN" serve "$SERVE_DIR" --host "$HOST" --port "$PORT_SERVE" --spa
+serve_pid="$LAST_PID"
+if wait_ready "http://$HOST:$PORT_SERVE/" "$serve_pid" "radix smoke index"; then
+  code="$(curl -sS -o "$TMPDIR_SMOKE/serve-body" -w '%{http_code}' "http://$HOST:$PORT_SERVE/" || true)"
+  assert_eq "serve returns 200" "$code" "200"
+  assert_contains "serve returns index.html" "$(cat "$TMPDIR_SMOKE/serve-body")" "radix smoke index"
 
-  # SPA fallback: an unknown deep path should still serve index.html.
-  spa_body="$(curl -sS "http://$HOST:$PORT_SERVE/some/spa/route" || true)"
-  assert_contains "serve --spa falls back to index.html" "$spa_body" "radix smoke index"
+  # SPA fallback: an unknown deep path should still serve index.html with 200.
+  spa_code="$(curl -sS -o "$TMPDIR_SMOKE/serve-spa-body" -w '%{http_code}' "http://$HOST:$PORT_SERVE/some/spa/route" || true)"
+  assert_eq "serve --spa fallback returns 200" "$spa_code" "200"
+  assert_contains "serve --spa falls back to index.html" "$(cat "$TMPDIR_SMOKE/serve-spa-body")" "radix smoke index"
 else
   fail "serve becomes ready" "$(tail -n 5 "$TMPDIR_SMOKE/serve.log")"
 fi
@@ -198,11 +221,14 @@ fi
 info "echo"
 
 start_bg "$TMPDIR_SMOKE/echo.log" \
-  "$BIN" echo --host "$HOST" --port "$PORT_ECHO" >/dev/null
-if wait_ready "http://$HOST:$PORT_ECHO/_health"; then
-  echo_body="$(curl -sS -X POST "http://$HOST:$PORT_ECHO/anything" \
+  "$BIN" echo --host "$HOST" --port "$PORT_ECHO"
+echo_pid="$LAST_PID"
+if wait_ready "http://$HOST:$PORT_ECHO/_health" "$echo_pid" '"status":"ok"'; then
+  echo_code="$(curl -sS -o "$TMPDIR_SMOKE/echo-body" -w '%{http_code}' -X POST "http://$HOST:$PORT_ECHO/anything" \
     -H 'Content-Type: application/json' \
     -d '{"smoke":"echo-test"}' || true)"
+  echo_body="$(cat "$TMPDIR_SMOKE/echo-body")"
+  assert_eq "echo returns 200" "$echo_code" "200"
   assert_contains "echo reflects request method" "$echo_body" '"method": "POST"'
   assert_contains "echo reflects request body" "$echo_body" 'echo-test'
 else
@@ -214,24 +240,29 @@ fi
 info "mock (built-ins)"
 
 start_bg "$TMPDIR_SMOKE/mock.log" \
-  "$BIN" mock --host "$HOST" --port "$PORT_MOCK" >/dev/null
-if wait_ready "http://$HOST:$PORT_MOCK/_health"; then
-  get_body="$(curl -sS "http://$HOST:$PORT_MOCK/get?foo=bar" || true)"
-  assert_contains "mock /get reflects query args" "$get_body" '"foo"'
+  "$BIN" mock --host "$HOST" --port "$PORT_MOCK"
+mock_pid="$LAST_PID"
+if wait_ready "http://$HOST:$PORT_MOCK/_health" "$mock_pid" '"status":"ok"'; then
+  get_code="$(curl -sS -o "$TMPDIR_SMOKE/mock-get-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK/get?foo=bar" || true)"
+  assert_eq "mock /get returns 200" "$get_code" "200"
+  assert_contains "mock /get reflects query args" "$(cat "$TMPDIR_SMOKE/mock-get-body")" '"foo"'
 
   status_code="$(curl -sS -o /dev/null -w '%{http_code}' "http://$HOST:$PORT_MOCK/status/418" || true)"
   assert_eq "mock /status/418 returns 418" "$status_code" "418"
 
-  uuid_body="$(curl -sS "http://$HOST:$PORT_MOCK/uuid" || true)"
+  uuid_code="$(curl -sS -o "$TMPDIR_SMOKE/mock-uuid-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK/uuid" || true)"
+  assert_eq "mock /uuid returns 200" "$uuid_code" "200"
+  uuid_body="$(cat "$TMPDIR_SMOKE/mock-uuid-body")"
   # Assert the response is a JSON object with a v4-shaped uuid value.
-  if printf '%s' "$uuid_body" | grep -qiE '"uuid"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"'; then
+  if grep -qiE '"uuid"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"' <<<"$uuid_body"; then
     pass "mock /uuid returns a v4 uuid"
   else
     fail "mock /uuid returns a v4 uuid" "got: $uuid_body"
   fi
 
-  headers_body="$(curl -sS "http://$HOST:$PORT_MOCK/headers" || true)"
-  assert_contains "mock /headers returns a headers object" "$headers_body" '"headers"'
+  headers_code="$(curl -sS -o "$TMPDIR_SMOKE/mock-headers-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK/headers" || true)"
+  assert_eq "mock /headers returns 200" "$headers_code" "200"
+  assert_contains "mock /headers returns a headers object" "$(cat "$TMPDIR_SMOKE/mock-headers-body")" '"headers"'
 else
   fail "mock becomes ready" "$(tail -n 5 "$TMPDIR_SMOKE/mock.log")"
 fi
@@ -241,17 +272,21 @@ fi
 info "mock (custom routes)"
 
 start_bg "$TMPDIR_SMOKE/mock-routes.log" \
-  "$BIN" mock --routes examples/mock-routes.yml --host "$HOST" --port "$PORT_MOCK_ROUTES" >/dev/null
-if wait_ready "http://$HOST:$PORT_MOCK_ROUTES/_health"; then
-  health_body="$(curl -sS "http://$HOST:$PORT_MOCK_ROUTES/api/health" || true)"
-  assert_contains "custom route /api/health returns templated body" "$health_body" '"status":"ok"'
+  "$BIN" mock --routes examples/mock-routes.yml --host "$HOST" --port "$PORT_MOCK_ROUTES"
+mock_routes_pid="$LAST_PID"
+if wait_ready "http://$HOST:$PORT_MOCK_ROUTES/_health" "$mock_routes_pid" '"status":"ok"'; then
+  health_code="$(curl -sS -o "$TMPDIR_SMOKE/route-health-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK_ROUTES/api/health" || true)"
+  assert_eq "custom route /api/health returns 200" "$health_code" "200"
+  assert_contains "custom route /api/health returns templated body" "$(cat "$TMPDIR_SMOKE/route-health-body")" '"status":"ok"'
 
-  user_body="$(curl -sS "http://$HOST:$PORT_MOCK_ROUTES/api/users/123" || true)"
-  assert_contains "custom route /api/users/:id templates the path param" "$user_body" '"id": "123"'
+  user_code="$(curl -sS -o "$TMPDIR_SMOKE/route-user-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK_ROUTES/api/users/123" || true)"
+  assert_eq "custom route /api/users/:id returns 200" "$user_code" "200"
+  assert_contains "custom route /api/users/:id templates the path param" "$(cat "$TMPDIR_SMOKE/route-user-body")" '"id": "123"'
 
   # Built-in endpoints remain reachable alongside custom routes.
-  builtin_body="$(curl -sS "http://$HOST:$PORT_MOCK_ROUTES/uuid" || true)"
-  assert_contains "built-in /uuid still reachable with custom routes" "$builtin_body" '"uuid"'
+  builtin_code="$(curl -sS -o "$TMPDIR_SMOKE/route-uuid-body" -w '%{http_code}' "http://$HOST:$PORT_MOCK_ROUTES/uuid" || true)"
+  assert_eq "built-in /uuid returns 200 with custom routes" "$builtin_code" "200"
+  assert_contains "built-in /uuid still reachable with custom routes" "$(cat "$TMPDIR_SMOKE/route-uuid-body")" '"uuid"'
 else
   fail "mock --routes becomes ready" "$(tail -n 5 "$TMPDIR_SMOKE/mock-routes.log")"
 fi
@@ -262,16 +297,21 @@ info "proxy"
 
 # Use a mock server as the backend, then proxy to it.
 start_bg "$TMPDIR_SMOKE/proxy-backend.log" \
-  "$BIN" mock --host "$HOST" --port "$PORT_PROXY_BACKEND" >/dev/null
-if wait_ready "http://$HOST:$PORT_PROXY_BACKEND/_health"; then
+  "$BIN" mock --host "$HOST" --port "$PORT_PROXY_BACKEND"
+proxy_backend_pid="$LAST_PID"
+if wait_ready "http://$HOST:$PORT_PROXY_BACKEND/_health" "$proxy_backend_pid" '"status":"ok"'; then
   start_bg "$TMPDIR_SMOKE/proxy.log" \
-    "$BIN" proxy "http://$HOST:$PORT_PROXY_BACKEND" --host "$HOST" --port "$PORT_PROXY" >/dev/null
-  if wait_ready "http://$HOST:$PORT_PROXY/_health"; then
-    proxied_body="$(curl -sS "http://$HOST:$PORT_PROXY/uuid" || true)"
-    assert_contains "proxy forwards to backend (/uuid)" "$proxied_body" '"uuid"'
+    "$BIN" proxy "http://$HOST:$PORT_PROXY_BACKEND" --host "$HOST" --port "$PORT_PROXY"
+  proxy_pid="$LAST_PID"
+  # The proxy forwards /_health to the backend, which returns {"status":"ok"}.
+  if wait_ready "http://$HOST:$PORT_PROXY/_health" "$proxy_pid" '"status":"ok"'; then
+    uuid_code="$(curl -sS -o "$TMPDIR_SMOKE/proxy-uuid-body" -w '%{http_code}' "http://$HOST:$PORT_PROXY/uuid" || true)"
+    assert_eq "proxy /uuid returns 200" "$uuid_code" "200"
+    assert_contains "proxy forwards to backend (/uuid)" "$(cat "$TMPDIR_SMOKE/proxy-uuid-body")" '"uuid"'
 
-    proxied_get="$(curl -sS "http://$HOST:$PORT_PROXY/get?via=proxy" || true)"
-    assert_contains "proxy forwards query args to backend" "$proxied_get" '"via"'
+    get_code="$(curl -sS -o "$TMPDIR_SMOKE/proxy-get-body" -w '%{http_code}' "http://$HOST:$PORT_PROXY/get?via=proxy" || true)"
+    assert_eq "proxy /get returns 200" "$get_code" "200"
+    assert_contains "proxy forwards query args to backend" "$(cat "$TMPDIR_SMOKE/proxy-get-body")" '"via"'
   else
     fail "proxy becomes ready" "$(tail -n 5 "$TMPDIR_SMOKE/proxy.log")"
   fi

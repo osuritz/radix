@@ -56,12 +56,15 @@ proxy:
   # CORS
   cors: false  # add permissive CORS headers to proxied responses
   # Auth extensions (HeaderProvider interface)
-  # If a fork compiles in a custom HeaderProvider (e.g., for Okta), it is
-  # used automatically — no config needed here. This section is only required
-  # when multiple providers are registered or to pass provider-specific settings.
+  # Current behavior: if a fork compiles in exactly one custom HeaderProvider
+  # (e.g., for Okta), it is auto-detected and used — no config needed here.
+  # Otherwise the proxy falls back to injecting the static `headers` above. The
+  # `auth.provider` field below is reserved for future use: explicit selection
+  # among MULTIPLE registered providers is NOT yet wired into `radix proxy`, so
+  # with two or more providers compiled in, none is auto-selected today.
   # See IMPLEMENTATION_PLAN.md Section 15.
   # auth:
-  #   provider: okta            # Only needed to disambiguate multiple providers
+  #   provider: okta            # Reserved/future — not yet honored by proxy
   #   config:                   # Optional provider-specific settings
   #     audience: "api.internal"
 

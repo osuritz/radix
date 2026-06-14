@@ -103,6 +103,45 @@ func TestProxyCmd_TargetWithoutScheme(t *testing.T) {
 	}
 }
 
+func TestProxyCmd_CORSFlagOverridesConfig(t *testing.T) {
+	oldCfg := cfg
+	oldCORS := proxyCORS
+	defer func() {
+		cfg = oldCfg
+		proxyCORS = oldCORS
+		// Reset the flag's Changed state so other tests are unaffected.
+		_ = proxyCmd.Flags().Set("cors", "false")
+		proxyCmd.Flags().Lookup("cors").Changed = false
+	}()
+
+	// Config file has CORS disabled; the --cors flag must override it to true.
+	cfg = &config.Config{Proxy: config.ProxyConfig{CORS: false}}
+	if err := proxyCmd.Flags().Set("cors", "true"); err != nil {
+		t.Fatalf("failed to set --cors flag: %v", err)
+	}
+
+	if err := applyProxyFlags(proxyCmd, nil); err != nil {
+		t.Fatalf("applyProxyFlags returned error: %v", err)
+	}
+	if !cfg.Proxy.CORS {
+		t.Error("expected --cors flag to override cfg.Proxy.CORS to true")
+	}
+}
+
+func TestProxyCmd_CORSFromConfigWhenFlagUnset(t *testing.T) {
+	oldCfg := cfg
+	defer func() { cfg = oldCfg }()
+
+	// No --cors flag set: the config value must be preserved (not clobbered).
+	cfg = &config.Config{Proxy: config.ProxyConfig{CORS: true}}
+	if err := applyProxyFlags(proxyCmd, nil); err != nil {
+		t.Fatalf("applyProxyFlags returned error: %v", err)
+	}
+	if !cfg.Proxy.CORS {
+		t.Error("expected cfg.Proxy.CORS to remain true when --cors flag is unset")
+	}
+}
+
 func TestProxyCmd_FlagDefaults(t *testing.T) {
 	tests := []struct {
 		name        string

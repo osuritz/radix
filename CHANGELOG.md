@@ -29,7 +29,10 @@ shutdown.
     defaulting to immediate flush for SSE / agent-chat backends).
   - HTTPS frontend plus backend TLS, including mTLS (`--tls-skip-verify`,
     backend CA/cert/key).
-  - Pluggable auth header injection via the `HeaderProvider` interface.
+  - Pluggable auth header injection via the `HeaderProvider` interface: a
+    single compiled-in provider is auto-detected and used, otherwise the static
+    `--header` values are injected (explicit `auth.provider` selection among
+    multiple providers is reserved for a future release).
 - **`radix echo`** — echoes each request back as JSON (method, URL, path, query,
   headers, cookies, body, client/server info, TLS state, timing).
   - JSON/form body parsing; configurable status (`--status`), delay with jitter
@@ -62,10 +65,13 @@ shutdown.
   `--client-auth`, `--tls-min-version`) and a TLS config loader shared by all
   server commands.
 - **Auth extensions** — `HeaderProvider` interface with `InjectHeaders`
-  middleware, a `StaticProvider` for fixed headers, and a provider registry with
-  auto-detection (a single compiled-in provider is used without config;
-  resolution is explicit config → auto-detect → static fallback). Designed for
-  corporate forks that inject tokens (Okta, Azure AD, etc.) into proxied requests.
+  middleware, a `StaticProvider` for fixed headers, and a provider registry.
+  Today the `proxy` command auto-detects a single compiled-in provider (used
+  without any config) and otherwise falls back to injecting the static
+  `--header`/`proxy.headers` values; explicit `proxy.auth.provider` selection
+  among multiple registered providers is supported by the registry but not yet
+  wired into the command (reserved for a future release). Designed for corporate
+  forks that inject tokens (Okta, Azure AD, etc.) into proxied requests.
 - **Middleware** — CORS and gzip compression middleware; HSTS security-headers
   middleware.
 - **`scripts/smoke.sh`** and a `make smoke` target — end-to-end smoke test that
