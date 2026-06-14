@@ -1,4 +1,4 @@
-.PHONY: build test lint install clean run coverage help
+.PHONY: build test lint install clean run coverage smoke help
 
 # Version information
 VERSION ?= dev
@@ -42,6 +42,10 @@ lint: ## Run linters
 		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$$(go env GOPATH)/bin"; \
 		exit 1; \
 	fi
+
+smoke: ## Run end-to-end smoke tests
+	@echo "Running smoke tests..."
+	bash scripts/smoke.sh
 
 install: ## Install the binary to GOPATH/bin
 	@echo "Installing $(BINARY)..."
