@@ -126,6 +126,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ Port: %d (valid)\n", loadedCfg.Port)
 
+	// Validate serve TLS-coupling rules (HSTS/redirect require TLS, redirect
+	// port must differ from the main port, non-negative HSTS max-age). This is
+	// the same check the serve command runs at startup, so a bad config file is
+	// caught here instead of only failing at runtime.
+	if err := config.ValidateServeTLS(loadedCfg); err != nil {
+		return fmt.Errorf("✗ Serve configuration: %w", err)
+	}
+
 	// Validate serve directory if specified
 	if loadedCfg.Serve.Dir != "" && loadedCfg.Serve.Dir != "." {
 		if info, err := os.Stat(loadedCfg.Serve.Dir); err != nil {
