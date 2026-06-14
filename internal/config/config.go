@@ -132,6 +132,37 @@ type MockConfig struct {
 	Prefix  string `mapstructure:"prefix"`
 }
 
+// ValidateServeTLS checks serve options that are coupled to TLS and the
+// HTTP→HTTPS redirect listener. It is shared between the serve command's
+// runtime checks and the offline `radix validate` path so that a misconfigured
+// file is rejected before it ever reaches the server.
+//
+// Rules enforced:
+//   - serve.hsts requires tls.enabled
+//   - serve.http_redirect requires tls.enabled
+//   - serve.http_port must differ from port when http_redirect is set
+//   - serve.hsts_max_age must not be negative (0 is valid: it clears the policy)
+func ValidateServeTLS(cfg *Config) error {
+	// A negative HSTS max-age is never valid (max-age=0 clears the policy).
+	if cfg.Serve.HSTSMaxAge < 0 {
+		return fmt.Errorf("--hsts-max-age (%d) must not be negative", cfg.Serve.HSTSMaxAge)
+	}
+
+	// HSTS and HTTP→HTTPS redirect are only meaningful with TLS enabled.
+	if cfg.Serve.HSTS && !cfg.TLS.Enabled {
+		return fmt.Errorf("--hsts requires --tls")
+	}
+	if cfg.Serve.HTTPRedirect {
+		if !cfg.TLS.Enabled {
+			return fmt.Errorf("--http-redirect requires --tls")
+		}
+		if cfg.Serve.HTTPPort == cfg.Port {
+			return fmt.Errorf("--http-port (%d) must differ from --port (%d)", cfg.Serve.HTTPPort, cfg.Port)
+		}
+	}
+	return nil
+}
+
 // Load loads configuration from file, environment variables, and defaults
 func Load(cfgFile string) (*Config, error) {
 	v := viper.New()

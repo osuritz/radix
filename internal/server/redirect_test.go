@@ -61,6 +61,59 @@ func TestRedirectToHTTPS_PreservesMethodWithPOST(t *testing.T) {
 	}
 }
 
+func TestRedirectToHTTPS_IPv6HostWithoutPort(t *testing.T) {
+	handler := RedirectToHTTPS(8443)
+
+	req := httptest.NewRequest(http.MethodGet, "/path?q=1", nil)
+	req.Host = "[::1]"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusPermanentRedirect)
+	}
+	want := "https://[::1]:8443/path?q=1"
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
+func TestRedirectToHTTPS_IPv6HostWithPort(t *testing.T) {
+	handler := RedirectToHTTPS(8443)
+
+	req := httptest.NewRequest(http.MethodGet, "/path?q=1", nil)
+	req.Host = "[::1]:8080"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusPermanentRedirect)
+	}
+	want := "https://[::1]:8443/path?q=1"
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
+func TestRedirectToHTTPS_EmptyHost(t *testing.T) {
+	handler := RedirectToHTTPS(8443)
+
+	req := httptest.NewRequest(http.MethodGet, "/path", nil)
+	req.Host = ""
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty (no redirect)", loc)
+	}
+}
+
 func TestRedirectToHTTPS_RootPath(t *testing.T) {
 	handler := RedirectToHTTPS(8443)
 

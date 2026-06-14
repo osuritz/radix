@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/osuritz/radix/internal/config"
 	"github.com/osuritz/radix/internal/metrics"
 	"github.com/osuritz/radix/internal/server"
 	"github.com/osuritz/radix/internal/server/middleware"
@@ -98,28 +99,10 @@ func applyServeFlagOverrides(cmd *cobra.Command, args []string) {
 	}
 }
 
-// validateServeTLSOptions checks serve options that are only meaningful when
-// TLS is enabled (HSTS and the HTTP→HTTPS redirect listener).
-func validateServeTLSOptions() error {
-	// HSTS and HTTP→HTTPS redirect are only meaningful with TLS enabled.
-	if cfg.Serve.HSTS && !cfg.TLS.Enabled {
-		return fmt.Errorf("--hsts requires --tls")
-	}
-	if cfg.Serve.HTTPRedirect {
-		if !cfg.TLS.Enabled {
-			return fmt.Errorf("--http-redirect requires --tls")
-		}
-		if cfg.Serve.HTTPPort == cfg.Port {
-			return fmt.Errorf("--http-port (%d) must differ from --port (%d)", cfg.Serve.HTTPPort, cfg.Port)
-		}
-	}
-	return nil
-}
-
 func runServe(cmd *cobra.Command, args []string) error {
 	applyServeFlagOverrides(cmd, args)
 
-	if err := validateServeTLSOptions(); err != nil {
+	if err := config.ValidateServeTLS(cfg); err != nil {
 		return err
 	}
 
@@ -223,33 +206,58 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	srv := server.NewServer(srvCfg)
 
-	// Coordinate the (optional) HTTP→HTTPS redirect server with the main
-	// server: a shared, cancelable context ensures that when either server
-	// stops (signal or error), the other is asked to shut down too.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	// Build the optional HTTP→HTTPS redirect server.
+	var redirectSrv *server.Server
 	if cfg.Serve.HTTPRedirect {
 		redirectAddr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Serve.HTTPPort))
-		redirectSrv := server.NewServer(&server.Config{
+		redirectSrv = server.NewServer(&server.Config{
 			Addr:    redirectAddr,
 			Handler: server.RedirectToHTTPS(cfg.Port),
 			Banner:  fmt.Sprintf("Redirecting http://%s to %s", redirectAddr, addr),
 			// No TLSConfig: the redirect listener speaks plain HTTP.
 		})
+	}
+
+	// A shared, cancelable context ties the two servers together: when either
+	// stops (signal or error), the other is asked to shut down too.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	return runServeServers(ctx, srv, redirectSrv)
+}
+
+// runServeServers starts the main server and (if non-nil) the redirect server,
+// blocking until ctx is canceled or either server fails.
+//
+// A redirect-listener failure (e.g. its port is already in use) cancels the
+// shared context, tearing down the main server too, and is returned to the
+// caller (taking precedence only when the main server itself shut down cleanly).
+// Because Server.Start returns nil on a clean signal/context shutdown, a normal
+// SIGINT yields no spurious error. Waiting on the redirect goroutine's channel
+// also guarantees its graceful Shutdown has completed before this returns.
+func runServeServers(ctx context.Context, main, redirect *server.Server) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var redirectErrCh chan error
+	if redirect != nil {
+		redirectErrCh = make(chan error, 1)
 		go func() {
-			// A redirect-listener failure (e.g. port in use) must not crash the
-			// process; surface it on the server output instead of silently
-			// no-op'ing. Start blocks until the shared context is canceled.
-			if rerr := redirectSrv.Start(ctx); rerr != nil {
-				fmt.Fprintf(os.Stderr, "http redirect server error: %v\n", rerr)
+			rerr := redirect.Start(ctx)
+			if rerr != nil {
+				cancel() // a redirect failure tears down the main server too
 			}
+			redirectErrCh <- rerr
 		}()
 	}
 
-	// Start the main HTTPS server; it blocks until a signal or error. Canceling
-	// the shared context afterward stops the redirect server too.
-	err = srv.Start(ctx)
+	err := main.Start(ctx)
 	cancel()
+
+	if redirectErrCh != nil {
+		if rerr := <-redirectErrCh; rerr != nil && err == nil {
+			err = fmt.Errorf("http redirect listener: %w", rerr)
+		}
+	}
 	return err
 }
