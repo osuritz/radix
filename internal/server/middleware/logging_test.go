@@ -234,7 +234,7 @@ func TestGetStatusColor(t *testing.T) {
 var fixedNow = time.Date(2026, 6, 14, 14, 23, 1, 0, time.UTC)
 
 func TestFormatDevLine_NoColorGolden(t *testing.T) {
-	got := formatDevLine(fixedNow, "GET", "/index.html", 200, 2358, 12*time.Millisecond, false)
+	got := formatDevLine(fixedNow, "GET", "/index.html", 200, 2358, 12*time.Millisecond, false, "")
 	// 14:23:01 | "GET    " (pad 7) | "/index.html" padded to 28 | 200 | 12ms | 2.3KB
 	want := "14:23:01 GET     /index.html                  200 12ms 2.3KB\n"
 	if got != want {
@@ -243,7 +243,7 @@ func TestFormatDevLine_NoColorGolden(t *testing.T) {
 }
 
 func TestFormatDevLine_NoColorOmitsZeroSize(t *testing.T) {
-	got := formatDevLine(fixedNow, "DELETE", "/users/123", 204, 0, 5*time.Millisecond, false)
+	got := formatDevLine(fixedNow, "DELETE", "/users/123", 204, 0, 5*time.Millisecond, false, "")
 	// size == 0 -> no trailing size column (and no "-").
 	want := "14:23:01 DELETE  /users/123                   204 5ms\n"
 	if got != want {
@@ -255,7 +255,7 @@ func TestFormatDevLine_NoColorOmitsZeroSize(t *testing.T) {
 }
 
 func TestFormatDevLine_ColoredGolden(t *testing.T) {
-	got := formatDevLine(fixedNow, "GET", "/index.html", 200, 2358, 12*time.Millisecond, true)
+	got := formatDevLine(fixedNow, "GET", "/index.html", 200, 2358, 12*time.Millisecond, true, "")
 	want := ansiDim + "14:23:01" + ansiReset + " " +
 		getMethodColor("GET") + "GET    " + ansiReset + " " +
 		"/index.html                  " +
@@ -268,7 +268,7 @@ func TestFormatDevLine_ColoredGolden(t *testing.T) {
 
 func TestFormatDevLine_LongPathTruncated(t *testing.T) {
 	longPath := "/api/v1/some/extremely/long/resource/path/that/overflows"
-	got := formatDevLine(fixedNow, "GET", longPath, 200, 0, time.Millisecond, false)
+	got := formatDevLine(fixedNow, "GET", longPath, 200, 0, time.Millisecond, false, "")
 	// Path column must be exactly devPathWidth runes and end with the ellipsis.
 	// Work in runes since the ellipsis is multibyte; the prefix before the path
 	// is "HH:MM:SS " (9) + method padded to devMethodWidth + " " (1), all ASCII.
@@ -287,8 +287,8 @@ func TestFormatDevLine_ColumnAlignment(t *testing.T) {
 	// Paths must start at the same byte offset regardless of method length,
 	// and the status column must start at the same offset for paths within the
 	// fixed path width.
-	get := formatDevLine(fixedNow, "GET", "/a", 200, 0, time.Millisecond, false)
-	del := formatDevLine(fixedNow, "DELETE", "/a", 200, 0, time.Millisecond, false)
+	get := formatDevLine(fixedNow, "GET", "/a", 200, 0, time.Millisecond, false, "")
+	del := formatDevLine(fixedNow, "DELETE", "/a", 200, 0, time.Millisecond, false, "")
 
 	if got, want := strings.Index(get, "/a"), strings.Index(del, "/a"); got != want {
 		t.Errorf("path column misaligned across methods: GET=%d DELETE=%d", got, want)
@@ -327,7 +327,7 @@ func TestFormatDevLine_MultibytePathColumnWidth(t *testing.T) {
 	// A short multibyte path must pad the path column to exactly devPathWidth
 	// runes, keeping the status column aligned with an ASCII path of equal rune
 	// length. With byte-based padding the multibyte path column would be short.
-	got := formatDevLine(fixedNow, "GET", "/café", 200, 0, time.Millisecond, false)
+	got := formatDevLine(fixedNow, "GET", "/café", 200, 0, time.Millisecond, false, "")
 	runes := []rune(got)
 	start := 9 + devMethodWidth + 1 // "HH:MM:SS " (9) + padded method + " " (1)
 	pathCol := runes[start : start+devPathWidth]
@@ -349,8 +349,8 @@ func TestFormatDevLine_LongMethodCapped(t *testing.T) {
 	// normal short method against the long one: the path column must start at the
 	// same byte offset for both.
 	longMethod := "THISISAVERYLONGCUSTOMMETHOD"
-	short := formatDevLine(fixedNow, "GET", "/a", 200, 0, time.Millisecond, false)
-	long := formatDevLine(fixedNow, longMethod, "/a", 200, 0, time.Millisecond, false)
+	short := formatDevLine(fixedNow, "GET", "/a", 200, 0, time.Millisecond, false, "")
+	long := formatDevLine(fixedNow, longMethod, "/a", 200, 0, time.Millisecond, false, "")
 
 	if got, want := strings.Index(long, "/a"), strings.Index(short, "/a"); got != want {
 		t.Errorf("long method shifted the path column: long=%d short=%d\n long: %q\nshort: %q",
@@ -363,6 +363,182 @@ func TestFormatDevLine_LongMethodCapped(t *testing.T) {
 	wantMethod := longMethod[:devMethodWidth]
 	if !strings.HasPrefix(strings.TrimPrefix(long, "14:23:01 "), wantMethod) {
 		t.Errorf("method not capped to %d runes; line: %q", devMethodWidth, long)
+	}
+}
+
+func TestFormatDevLine_ProxyTargetGolden(t *testing.T) {
+	// A proxy request shows its upstream target between the path and status
+	// columns: METHOD /path → target STATUS latency [size].
+	got := formatDevLine(fixedNow, "GET", "/api/users", 200, 2358, 12*time.Millisecond, false, "localhost:3000")
+	want := "14:23:01 GET     /api/users                   → localhost:3000 200 12ms 2.3KB\n"
+	if got != want {
+		t.Errorf("formatDevLine proxy-target mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatDevLine_FallbackTargetGolden(t *testing.T) {
+	// An SPA index fallback shows "fallback" as the target.
+	got := formatDevLine(fixedNow, "GET", "/some/route", 200, 1024, 3*time.Millisecond, false, "fallback")
+	want := "14:23:01 GET     /some/route                  → fallback 200 3ms 1.0KB\n"
+	if got != want {
+		t.Errorf("formatDevLine fallback-target mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatDevLine_NoTargetOmitsArrowColumn(t *testing.T) {
+	// An empty target (e.g. a plain static asset hit) must produce a line
+	// byte-identical to the original no-target layout: no arrow, no extra space.
+	got := formatDevLine(fixedNow, "GET", "/style.css", 200, 2358, 12*time.Millisecond, false, "")
+	want := "14:23:01 GET     /style.css                   200 12ms 2.3KB\n"
+	if got != want {
+		t.Errorf("formatDevLine empty-target mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if strings.Contains(got, "→") {
+		t.Errorf("empty target must not emit an arrow column: %q", got)
+	}
+}
+
+func TestFormatDevLine_ColoredTargetGolden(t *testing.T) {
+	// With color on, the arrow is dimmed and the target value is left uncolored;
+	// the rest of the colored layout is unchanged.
+	got := formatDevLine(fixedNow, "GET", "/api/users", 200, 2358, 12*time.Millisecond, true, "users:8080")
+	want := ansiDim + "14:23:01" + ansiReset + " " +
+		getMethodColor("GET") + "GET    " + ansiReset + " " +
+		"/api/users                   " +
+		ansiDim + "→" + ansiReset + " users:8080 " +
+		getStatusColor(200) + "200" + ansiReset + " " +
+		"12ms 2.3KB\n"
+	if got != want {
+		t.Errorf("formatDevLine colored-target mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// TestLogging_AnnotationTargetInDevOutput verifies the end-to-end path: a
+// downstream handler that mutates the request-scoped *LogAnnotation yields the
+// target in the dev access-log line.
+func TestLogging_AnnotationTargetInDevOutput(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+
+	var buf bytes.Buffer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := LogAnnotationFromContext(r.Context()); a != nil {
+			a.Kind = "proxy"
+			a.Target = "localhost:3000"
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	wrapped := Logging(LoggingConfig{Format: LogFormatDev, Output: &buf})(handler)
+
+	req := httptest.NewRequest("GET", "/api/users", nil)
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, "→ localhost:3000") {
+		t.Errorf("dev line missing target column: %q", out)
+	}
+}
+
+// TestLogging_NoAnnotationNoArrow verifies that when no handler sets a target,
+// the dev line carries no arrow column.
+func TestLogging_NoAnnotationNoArrow(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+
+	var buf bytes.Buffer
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	wrapped := Logging(LoggingConfig{Format: LogFormatDev, Output: &buf})(handler)
+
+	req := httptest.NewRequest("GET", "/style.css", nil)
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+
+	if out := buf.String(); strings.Contains(out, "→") {
+		t.Errorf("dev line should have no arrow column when no target is set: %q", out)
+	}
+}
+
+// withTarget returns a copy of r whose context carries a *LogAnnotation with
+// the given target set (mirroring what a downstream handler would do). It is
+// used to prove that the presence of an annotation cannot perturb CLF/ECLF.
+func withTarget(r *http.Request, target string) *http.Request {
+	ctx, a := withLogAnnotation(r.Context())
+	a.Kind = "proxy"
+	a.Target = target
+	return r.WithContext(ctx)
+}
+
+// TestLogging_AnnotationDoesNotAffectCLF is the byte-identity guard for the
+// PR's critical invariant: CLF and Extended CLF must be byte-for-byte identical
+// whether or not a *LogAnnotation (with a target set) rides on the request
+// context. It asserts exact golden strings at a fixed timestamp — so it fails
+// if spacing, bytes, or the target leak into either format — and additionally
+// asserts that the with-target and without-target outputs are equal.
+func TestLogging_AnnotationDoesNotAffectCLF(t *testing.T) {
+	const (
+		wantCLF  = "127.0.0.1 - - [14/Jun/2026:14:23:01 +0000] \"GET /api/users HTTP/1.1\" 200 2358\n"
+		wantECLF = "127.0.0.1 - - [14/Jun/2026:14:23:01 +0000] \"GET /api/users HTTP/1.1\" 200 2358 " +
+			"\"http://example.com/\" \"radix-test/1.0\"\n"
+	)
+
+	tests := []struct {
+		name   string
+		format LogFormat
+		want   string
+	}{
+		{name: "clf", format: LogFormatCLF, want: wantCLF},
+		{name: "extended_clf", format: LogFormatExtendedCLF, want: wantECLF},
+	}
+
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		// Set referrer/user-agent so the Extended CLF golden is fully determined.
+		req.Header.Set("Referer", "http://example.com/")
+		req.Header.Set("User-Agent", "radix-test/1.0")
+		return req
+	}
+
+	format := func(f LogFormat, r *http.Request) string {
+		switch f {
+		case LogFormatCLF:
+			return formatCLFAt(fixedNow, r, 200, 2358)
+		case LogFormatExtendedCLF:
+			return formatExtendedCLFAt(fixedNow, r, 200, 2358)
+		default:
+			t.Fatalf("unexpected format %q", f)
+			return ""
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Without any annotation on the context.
+			plain := format(tt.format, newReq())
+			if plain != tt.want {
+				t.Errorf("%s without annotation:\n got: %q\nwant: %q", tt.format, plain, tt.want)
+			}
+
+			// With a *LogAnnotation (target set) on the context: byte-identical.
+			annotated := format(tt.format, withTarget(newReq(), "localhost:3000"))
+			if annotated != tt.want {
+				t.Errorf("%s with annotation:\n got: %q\nwant: %q", tt.format, annotated, tt.want)
+			}
+			if annotated != plain {
+				t.Errorf("%s output differs with vs without annotation:\n with: %q\nwithout: %q",
+					tt.format, annotated, plain)
+			}
+
+			// Defense in depth: the target must never appear in the bytes.
+			if strings.Contains(annotated, "→") || strings.Contains(annotated, "localhost:3000") {
+				t.Errorf("%s output must not contain the target annotation: %q", tt.format, annotated)
+			}
+		})
 	}
 }
 

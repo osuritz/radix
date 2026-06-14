@@ -435,15 +435,34 @@ formats are available:
   reading at a glance during local development. Columns, in order: a dimmed
   short timestamp (`HH:MM:SS`), the HTTP method (color-coded, padded so paths
   align), the request path (padded, with overly long paths truncated by a
-  single `…` so the columns stay aligned), the status code (color-coded), the
-  latency, and — only when the response had a body — a human-readable size. A
-  zero-size response omits the size column entirely.
+  single `…` so the columns stay aligned), an optional dimmed `→ target` column
+  (see below), the status code (color-coded), the latency, and — only when the
+  response had a body — a human-readable size. A zero-size response omits the
+  size column entirely.
 
   ```
   14:23:01 GET     /index.html                  200 12ms 2.3KB
   14:23:01 POST    /api/users                   201 8ms 142B
   14:23:01 DELETE  /users/123                    204 5ms
   ```
+
+  The `→ target` column tells the request story left-to-right
+  (`METHOD /path → target STATUS latency [size]`) and appears only when it is
+  meaningful:
+
+  - **`radix proxy`** shows the upstream the request was forwarded to (the
+    target host, e.g. `localhost:3000`).
+  - **`radix serve --spa`** shows `fallback` only when a request is served the
+    SPA index because the path did not exist; real files and plain static
+    assets get no target column.
+
+  ```
+  14:23:01 GET     /api/users                   → localhost:3000 200 12ms 2.3KB
+  14:23:01 GET     /dashboard                   → fallback 200 3ms 1.0KB
+  ```
+
+  When no target applies the line is unchanged from the layout above (no arrow,
+  no extra spacing).
 
 - **`clf`** — Common Log Format.
 - **`extended_clf`** — Common Log Format plus referrer and user-agent. This is
