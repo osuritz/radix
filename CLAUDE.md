@@ -2,8 +2,8 @@
 
 This document provides comprehensive guidance for AI assistants (like Claude Code) working on the Radix codebase. It covers project structure, development workflows, conventions, and best practices.
 
-**Last Updated**: 2026-01-02
-**Project Version**: v0.1.0-alpha.1
+**Last Updated**: 2026-06-14
+**Project Version**: v0.2.0
 **Go Version**: 1.25+
 
 ---
