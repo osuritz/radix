@@ -29,7 +29,7 @@ For production use cases, users should use nginx, Caddy, or cloud load balancers
 
 1. **Zero-config startup** - `radix serve` just works
 2. **Developer experience first** - Clear errors, sensible defaults
-3. **Single binary** - No runtime dependencies, easy to install
+3. **Single binary** - Self-contained, easy to install; no external services required to run (the optional keychain value source reads the OS credential store at runtime)
 4. **Fast startup** - Sub-100ms to serving requests
 5. **Observable** - Built-in metrics and logging for debugging
 
@@ -803,10 +803,20 @@ mock:
   - [x] Implement auto-detection: single registered provider used without config
   - [x] Implement `StaticProvider` for fixed headers from config (fallback)
   - [x] Add optional `AuthConfig` struct to `ProxyConfig` in `internal/config/config.go`
+  - [x] Implement config-driven value sources (no fork needed): `${env:...}` and
+        `${keychain:...}` token resolution in header values, per request with a
+        TTL cache for keychain reads (`auth_resolver.go`, `ResolvingProvider`)
+  - [x] Implement built-in structured `headers` provider (Surface B) via
+        `proxy.auth.provider: headers` + `config.headers` (`NewSpecProvider`)
+  - [x] Keychain backed by `github.com/zalando/go-keyring` behind a
+        `KeychainReader` interface (swappable / testable)
+  - [x] Security: fail loud on unresolved sources (502); never log secret values
+        (names-only verbose injection logging)
   - [ ] Add auth provider metrics (injections, errors, latency)
   - [x] Tests for `HeaderProvider` interface compliance
   - [x] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
   - [x] Tests for `StaticProvider`
+  - [x] Tests for value resolver (env, keychain, caching, fail-loud, redaction)
   - [x] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
   - [x] Document fork integration pattern in code comments
   - [ ] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
@@ -1111,12 +1121,17 @@ changelog:
 
 ## 8. Key Design Decisions
 
-### 1. No External Dependencies for Core Logic
-- Use standard library for HTTP serving
-- Only use external deps for CLI framework and config
+### 1. Minimal, Curated Dependencies for Core Logic
+- Use the standard library for HTTP serving
+- Limit external deps to a small, deliberate set: CLI framework and config,
+  file watching, YAML, and an OS-keychain reader
+- Justify each dependency and measure its real cost (e.g. binary-size impact)
+  before adding it
 
 ### 2. Single Binary
-- No runtime dependencies
+- Self-contained binary; no external services required to run
+- The keychain value source talks to the OS credential store at runtime
+  (macOS Keychain, Windows Credential Manager, Linux Secret Service via D-Bus)
 - Easy distribution and installation
 - Cross-platform support
 
@@ -1479,9 +1494,53 @@ Request flow with auth middleware:
 Request → Metrics → Logging → InjectHeaders(provider) → ReverseProxy → Backend
 ```
 
+### Built-in config-driven value sources (no fork required)
+
+Forks are only needed for credentials that require real refresh logic. The common
+corporate case — "inject an email/header from the environment and a JWT that some
+other tool already dropped in the OS keychain" — is handled entirely from config
+by the built-in resolver (`internal/server/middleware/auth_resolver.go`), so
+engineers don't fork or recompile.
+
+A header value may reference value sources via `${...}` tokens:
+
+- `${env:NAME}` — value of environment variable `NAME`
+- `${keychain:SERVICE/ACCOUNT}` — secret from the OS keychain, via
+  `github.com/zalando/go-keyring` (macOS Keychain, Windows Credential Manager,
+  Linux Secret Service over D-Bus), behind a `KeychainReader` interface so the
+  backend is swappable and testable.
+
+Two equivalent authoring surfaces share the same resolver:
+
+```yaml
+# Surface A — inline ${...} tokens in raw header strings (also via --header)
+proxy:
+  headers:
+    - "X-Auth-Request-Email: ${env:USER_EMAIL}"
+    - "Authorization: Bearer ${keychain:work-cli/jwt}"
+
+# Surface B — structured, validatable; compiles down to the same templates
+proxy:
+  auth:
+    provider: headers            # reserved built-in provider name
+    config:
+      headers:
+        - { name: X-Auth-Request-Email, env: USER_EMAIL }
+        - { name: Authorization, prefix: "Bearer ", keychain: { service: work-cli, account: jwt } }
+        - { name: X-Gateway-Id, value: local-dev }
+```
+
+Values are resolved **per request** with a short TTL cache for keychain reads, so
+a rotated token is picked up without restarting radix (`ResolvingProvider`). Two
+security invariants are enforced: **fail loud** — an unset env var or keychain
+miss returns `502` rather than silently proxying without credentials — and
+**never log secrets** — verbose injection logging emits header names only, and
+provider errors (which reference source names, never values) are never echoed to
+the client.
+
 ### Configuration
 
-The `auth` config section is **optional**. Most forks won't need it — a single registered provider is used automatically. Config is only needed to disambiguate multiple providers or pass provider-specific settings:
+The `auth` config section is **optional**. Most forks won't need it — a single registered provider is used automatically. Config is only needed to select the built-in `headers` provider (Surface B above), disambiguate multiple providers, or pass provider-specific settings:
 
 ```yaml
 # Typical fork usage: no auth config needed at all.

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Config-driven auth header values from env vars and the OS keychain** — proxy
+  header values can now reference `${env:NAME}` and `${keychain:SERVICE/ACCOUNT}`
+  tokens, resolved per request (with a short TTL cache for keychain reads) so a
+  rotated token is picked up without restarting. This covers the common
+  corporate "simulate the edge gateway locally" case with no fork required.
+  Available in two equivalent surfaces: inline `${...}` tokens in `--header` /
+  `proxy.headers` (Surface A), and a structured `proxy.auth.provider: headers`
+  with a `config.headers` list (`value` / `env` / `keychain` + optional `prefix`,
+  Surface B). Keychain access is backed by `github.com/zalando/go-keyring` (macOS
+  Keychain, Windows Credential Manager, Linux Secret Service) behind a swappable
+  `KeychainReader` interface. Resolution **fails loud** (an unresolved or
+  set-but-empty source returns 502, never a silent unauthenticated proxy), and
+  injected secret values are **never logged** (verbose injection logging emits
+  header names only).
+
+### Dependencies
+
+- Added `github.com/zalando/go-keyring` for the keychain value source. Binary-size
+  impact of OS keychain support is small (measured, stripped release builds):
+  ~+85–100 KiB on macOS and ~+30 KiB on Windows; the Linux Secret Service backend
+  (`godbus/dbus`) adds ~+524 KiB.
+
 ## [0.3.0] - 2026-06-14
 
 ### Added

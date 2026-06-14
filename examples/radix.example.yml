@@ -51,23 +51,45 @@ proxy:
   # Path manipulation
   rewrite: ""
   strip_prefix: ""
-  # Headers to add/modify
+  # Headers to add/modify (Surface A). Values may contain ${...} tokens that are
+  # resolved per request, so a rotated token is picked up without a restart:
+  #   ${env:NAME}                 -> value of environment variable NAME
+  #   ${keychain:SERVICE/ACCOUNT} -> secret from the OS credential store
+  # An unset env var or a keychain miss fails the request with 502 (fail loud);
+  # injected values are never written to logs.
   headers: []
+  # Examples:
+  #   headers:
+  #     - "X-Auth-Request-Email: ${env:USER_EMAIL}"
+  #     - "X-Gateway-Id: local-dev"
+  #     - "Authorization: Bearer ${keychain:work-cli/jwt}"
   # CORS
   cors: false  # add permissive CORS headers to proxied responses
   # Auth extensions (HeaderProvider interface)
-  # If a fork compiles in exactly one custom HeaderProvider (e.g., for Okta), it
-  # is auto-detected and used — no config needed here. Otherwise the proxy falls
-  # back to injecting the static `headers` above.
-  # `auth.provider` selects among MULTIPLE registered providers by name (each
-  # compiled in via RegisterHeaderProvider). A name that isn't registered is a
-  # hard error, so misconfiguration fails fast instead of silently injecting no
-  # headers. `auth.config` holds provider-specific settings and is read by the
-  # provider itself; the built-in HeaderProvider interface does not consume it
-  # yet, so for now it is reserved for forks that wire it into their own provider.
+  #
+  # Built-in structured provider (Surface B): set provider to "headers" and list
+  # each header with exactly one value source (value / env / keychain) plus an
+  # optional prefix. This is the structured, validatable equivalent of the
+  # ${...} tokens above and uses the same resolver.
+  # auth:
+  #   provider: headers
+  #   config:
+  #     headers:
+  #       - name: X-Auth-Request-Email
+  #         env: USER_EMAIL
+  #       - name: Authorization
+  #         prefix: "Bearer "
+  #         keychain: { service: work-cli, account: jwt }
+  #       - name: X-Gateway-Id
+  #         value: local-dev
+  #
+  # Forks: if exactly one custom HeaderProvider is compiled in (e.g. for Okta),
+  # it is auto-detected and used with no config. `auth.provider` selects among
+  # MULTIPLE registered providers by name; an unregistered name is a hard error.
+  # The name "headers" is reserved for the built-in provider above.
   # See IMPLEMENTATION_PLAN.md Section 15.
   # auth:
-  #   provider: okta            # selects a registered provider by name
+  #   provider: okta            # selects a registered (fork) provider by name
   #   config:                   # provider-specific settings (read by the provider)
   #     audience: "api.internal"
 

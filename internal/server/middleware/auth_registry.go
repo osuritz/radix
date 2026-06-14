@@ -5,10 +5,48 @@ import (
 	"sync"
 )
 
+// BuiltinHeadersProvider is the reserved provider name selecting the built-in
+// structured header provider (Surface B), configured via proxy.auth.config.
+// Forks must not register a custom provider under this name.
+const BuiltinHeadersProvider = "headers"
+
 var (
 	providersMu sync.RWMutex
 	providers   = map[string]HeaderProvider{}
 )
+
+// AuthSettings bundles the proxy's auth configuration for ResolveAuthProvider.
+type AuthSettings struct {
+	// Provider is the explicit provider name. "" means auto-detect; the
+	// reserved value "headers" selects the built-in structured provider.
+	Provider string
+	// Config carries provider-specific settings (the built-in "headers"
+	// provider reads its config.headers list from here).
+	Config map[string]any
+	// StaticHeaders are raw "Key: Value" strings from --header / proxy.headers
+	// (Surface A). Values may contain ${env:...} / ${keychain:...} tokens.
+	StaticHeaders []string
+}
+
+// ResolveAuthProvider selects the proxy's HeaderProvider from full auth
+// settings. It is the single entry point used by the proxy command and layers
+// the structured built-in provider (Surface B) on top of ResolveProvider:
+//
+//   - Provider == "headers": build the built-in structured provider from
+//     Config (Surface B).
+//   - otherwise: delegate to ResolveProvider, which handles explicit fork
+//     providers, single-provider auto-detection, and the raw-header fallback
+//     (Surface A, including ${...} token resolution).
+func ResolveAuthProvider(s AuthSettings) (HeaderProvider, error) {
+	if s.Provider == BuiltinHeadersProvider {
+		specs, err := DecodeHeaderSpecs(s.Config)
+		if err != nil {
+			return nil, err
+		}
+		return NewSpecProvider(specs, nil)
+	}
+	return ResolveProvider(s.Provider, s.StaticHeaders)
+}
 
 // RegisterHeaderProvider registers a named HeaderProvider.
 // Call this from an init() function in your fork.
@@ -59,7 +97,13 @@ func ResolveProvider(configName string, staticHeaders []string) (HeaderProvider,
 	}
 
 	if len(staticHeaders) > 0 {
-		return NewStaticProvider(parseHeaders(staticHeaders)), nil
+		parsed := parseHeaders(staticHeaders)
+		// When any value carries a ${env:...} / ${keychain:...} token, resolve
+		// it per request (Surface A); otherwise keep the cheap static provider.
+		if hasTemplates(parsed) {
+			return NewResolvingProvider(parsed, nil), nil
+		}
+		return NewStaticProvider(parsed), nil
 	}
 
 	return nil, nil

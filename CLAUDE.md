@@ -26,7 +26,7 @@ This document provides comprehensive guidance for AI assistants (like Claude Cod
 
 ## Project Overview
 
-**Radix** is a multi-mode HTTP server for local development built in Go. It's designed to be a single, zero-dependency binary that replaces multiple development tools.
+**Radix** is a multi-mode HTTP server for local development built in Go. It ships as a single self-contained binary that replaces multiple development tools. It keeps a deliberately small, curated set of well-known Go dependencies (CLI/config framework, file watching, YAML, and an OS-keychain reader) rather than pulling in transitive sprawl — every dependency is a conscious, auditable choice.
 
 ### Purpose
 Provides local development HTTP capabilities:
@@ -53,7 +53,7 @@ Provides local development HTTP capabilities:
 ### Key Characteristics
 - **Language**: Go 1.25+
 - **CLI Framework**: Cobra + Viper
-- **Architecture**: Single binary, no runtime dependencies
+- **Architecture**: Single self-contained binary; no external services needed to run (the optional keychain value source reads the OS credential store at runtime)
 - **Platforms**: macOS, Linux, Windows (amd64, arm64)
 - **License**: MIT
 
@@ -738,6 +738,27 @@ type HeaderProvider interface {
 - Providers must be thread-safe (`Headers()` is called concurrently)
 - Full design: see `IMPLEMENTATION_PLAN.md` Section 15
 
+**Built-in config-driven header values (no fork required):** header values can be
+sourced from environment variables and the OS keychain straight from config —
+this covers the common corporate case without writing a provider. Two equivalent
+authoring surfaces, both backed by the same per-request resolver
+(`internal/server/middleware/auth_resolver.go`):
+
+- **Surface A — `${...}` tokens** in `proxy.headers` / `--header` values:
+  `${env:NAME}` and `${keychain:SERVICE/ACCOUNT}` (e.g.
+  `"Authorization: Bearer ${keychain:work-cli/jwt}"`).
+- **Surface B — structured** `proxy.auth.provider: headers` with a
+  `config.headers` list, each entry naming exactly one source
+  (`value` / `env` / `keychain`) plus an optional `prefix`. Compiles down to the
+  same templates as Surface A.
+
+Resolution is **per request** with a short TTL cache for keychain reads, so a
+rotated token is picked up without restarting radix. Two security invariants:
+**fail loud** (an unset env var or keychain miss returns 502, never a silent
+unauthenticated proxy) and **never log secrets** (verbose injection logging emits
+header names only). The keychain backend is `github.com/zalando/go-keyring`
+(macOS Keychain, Windows Credential Manager, Linux Secret Service).
+
 ---
 
 ## CI/CD & Release Process
@@ -921,7 +942,7 @@ Before creating a release:
 
 ### Common AI Assistant Pitfalls to Avoid
 
-1. **Don't add dependencies casually** - This project minimizes external deps
+1. **Don't add dependencies casually** - This project keeps a small, curated dependency set; justify any new dependency (measure its real cost, e.g. binary-size impact, before adding)
 2. **Don't skip tests** - Every new feature needs tests
 3. **Don't ignore linter warnings** - They're there for a reason
 4. **Don't create `pkg/` packages** - Use `internal/` for now
