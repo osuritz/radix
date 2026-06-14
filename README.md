@@ -160,11 +160,45 @@ For static headers, use `--header`. For dynamic token injection, see `IMPLEMENTA
 | `--header` | | Add header to proxied requests (`Key: Value`, repeatable) |
 | `--cors` | `false` | Enable permissive CORS headers |
 | `--timeout` | `30s` | Backend response timeout |
+| `--flush-interval` | `-1ns` | Response flush interval for streaming; negative flushes immediately (SSE), `0` uses default buffering |
 | `--tls` | `false` | Serve the proxy over HTTPS |
 | `--cert` | | TLS certificate file (for HTTPS frontend) |
 | `--key` | | TLS private key file (for HTTPS frontend) |
 | `--tls-skip-verify` | `false` | Skip TLS certificate verification for backend |
 | `--websocket` | `false` | Enable explicit WebSocket support |
+
+## Request Echo
+
+The `echo` command starts a server that answers every request with a JSON
+description of that request — method, URL, path, query, headers, cookies, body,
+client/server info, TLS state, and timing. It is handy for inspecting webhook
+payloads and debugging HTTP clients.
+
+```bash
+# Echo server on :8080
+radix echo
+
+# Inspect a POST: the response JSON contains the method and the parsed body
+curl -X POST localhost:8080/anything -d '{"hi":"there"}' -H 'Content-Type: application/json'
+
+# Simulate a slow API (fixed delay + random jitter)
+radix echo --delay 500ms --delay-jitter 200ms
+
+# Return a fixed status / body instead of the echo JSON
+radix echo --status 201 --body '{"ok":true}'
+
+# Derive status or delay from the request path
+radix echo --status-from-path   # GET /404 -> 404, GET /status/500 -> 500
+radix echo --delay-from-path    # GET /delay/2 or /delay/500ms
+```
+
+The body parses JSON and form-urlencoded content (with `body_raw`/`body_size`
+always included). Toggle echoed sections with `--echo-body`, `--echo-headers`,
+and `--echo-query`; cap the request body with `--body-limit` (413 on exceed) and
+control formatting with `--pretty`. `/_health` and `/_ready` are served at the
+root and are not echoed. Use `--cors` for permissive CORS, and the global TLS
+flags for HTTPS (the response's `tls` block reports the negotiated version,
+cipher, and server name).
 
 ## Mock Server
 
@@ -285,6 +319,52 @@ A malformed template or render error yields a `500` (the server stays up).
 | `--tls` | `false` | Serve the mock over HTTPS |
 
 > Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags. A file value of `cors: false` or `fail_rate: 0` is honored as written (an explicit zero/false is distinct from an omitted field).
+
+## TLS Certificates
+
+The `gencert` command generates self-signed certificates for local HTTPS. By
+default it creates a CA plus a server certificate signed by that CA; trust the CA
+once and your browser/OS stops warning about the generated certs.
+
+```bash
+# Generate certs for localhost into ./certs (cert.pem, key.pem, ca.pem, ca-key.pem)
+radix gencert
+
+# Multiple hostnames/IPs and a custom output directory
+radix gencert --host localhost,127.0.0.1,myapp.test --output ./certs
+
+# ECDSA key, 2-year validity
+radix gencert --key-type ecdsa --ecdsa-curve P-384 --days 730
+
+# Reuse an existing CA, or generate a client certificate
+radix gencert --ca-cert ./certs/ca.pem --ca-key ./certs/ca-key.pem
+radix gencert --client
+
+# Then serve over HTTPS with the generated cert
+radix serve --tls --cert ./certs/cert.pem --key ./certs/key.pem
+```
+
+Key flags: `--host` (comma-separated SANs), `--output`/`-o` (directory, default
+`./certs`), `--days`, `--org`, `--key-type` (`rsa`|`ecdsa`), `--key-size`
+(`2048`|`4096`), `--ecdsa-curve` (`P-256`|`P-384`|`P-521`), `--ca`/`--ca-cert`/
+`--ca-key`, `--client`, and `--overwrite`.
+
+## Configuration & Validation
+
+All commands read defaults from a config file (`./radix.yml`, `~/.radix.yml`, or
+`/etc/radix/radix.yml`, overridable with `--config`/`-c`), then `RADIX_*`
+environment variables, then CLI flags (CLI flags win). See
+[`examples/radix.example.yml`](examples/radix.example.yml) for every available
+key.
+
+The `validate` command checks a config file's syntax, schema, port range, TLS
+certificate paths, and serve TLS-coupling rules before you run a server:
+
+```bash
+radix validate                         # validate ./radix.yml
+radix validate examples/radix.example.yml
+radix validate --strict                # fail on warnings
+```
 
 ## Development
 

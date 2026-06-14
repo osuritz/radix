@@ -38,10 +38,17 @@ Provides local development HTTP capabilities:
 - **Metrics** - Built-in observability with JSON and Prometheus formats
 
 ### Project Status
-- **Phase**: Early Alpha (v0.1.0-alpha.1)
+- **Phase**: Feature-complete for the alpha/beta (v0.1.0-alpha.1)
 - **Completed**: CLI framework, config system, metrics infrastructure, CI/CD
-- **In Progress**: TLS support, server command implementations
-- **Not Yet Implemented**: serve, proxy, echo, mock commands
+- **Completed**: all commands — `serve`, `proxy`, `echo`, `mock` (built-in
+  httpbin-style endpoints + custom YAML routes + hot-reload), `gencert`,
+  `version`, `validate` — plus TLS/HTTPS support and the middleware suite
+  (logging, metrics, CORS, gzip, auth header injection, security/HSTS). All are
+  implemented and tested.
+- **Remaining (Phase 9 polish)**: release hardening (binary signing, distribution
+  channels), expanded integration/benchmark coverage, and a few nice-to-haves
+  noted in `IMPLEMENTATION_PLAN.md` (e.g. per-command auth/proxy/mock metrics,
+  per-route TLS, client-cert inspection in echo).
 
 ### Key Characteristics
 - **Language**: Go 1.25+
@@ -58,49 +65,76 @@ Provides local development HTTP capabilities:
 radix/
 ├── cmd/
 │   └── radix/
-│       └── main.go                   # Application entry point (17 lines)
+│       └── main.go                   # Application entry point
 │
-├── internal/                         # Private application code (~1,828 LOC)
+├── internal/                         # Private application code (~6,200 LOC, non-test)
 │   ├── cli/                          # Command-line interface commands
-│   │   ├── root.go                  # Root command with global flags
+│   │   ├── root.go                  # Root command with global/TLS/metrics flags
 │   │   ├── version.go               # Version information command
 │   │   ├── validate.go              # Configuration validation command
-│   │   └── [planned: serve, proxy, echo, mock, gencert]
+│   │   ├── gencert.go               # TLS certificate generation command
+│   │   ├── serve.go                 # Static file serving command
+│   │   ├── proxy.go                 # Reverse proxy command
+│   │   ├── echo.go                  # Request echo command
+│   │   └── mock.go                  # API mock command (built-ins + routes)
 │   │
 │   ├── config/                       # Configuration management
-│   │   └── config.go                # Config structs, loading, validation (213 LOC)
+│   │   └── config.go                # Config structs, loading, validation
 │   │
 │   ├── server/                       # HTTP server implementations
+│   │   ├── server.go                # Shared base HTTP server + graceful shutdown
+│   │   ├── fileserver.go            # Static file server (SPA, index)
+│   │   ├── proxy.go                 # Reverse proxy handler (streaming, fwd headers)
+│   │   ├── echo.go                  # Echo handler (request → JSON)
+│   │   ├── mock.go                  # Built-in httpbin-style mock endpoints
+│   │   ├── mock_routes.go           # Custom YAML routes: load/compile/match/template
+│   │   ├── mock_watch.go            # Routes-file hot-reload (fsnotify)
+│   │   ├── redirect.go              # HTTP→HTTPS redirect handler
 │   │   └── middleware/
-│   │       ├── logging.go           # Request logging (CLF, Extended CLF, Dev) (261 LOC)
-│   │       └── metrics.go           # Metrics collection middleware (65 LOC)
+│   │       ├── logging.go           # Request logging (CLF, Extended CLF, Dev)
+│   │       ├── metrics.go           # Metrics collection middleware
+│   │       ├── cors.go              # CORS headers middleware
+│   │       ├── gzip.go              # Gzip compression middleware
+│   │       ├── security.go          # Security headers (HSTS)
+│   │       ├── auth.go              # HeaderProvider interface + InjectHeaders
+│   │       ├── auth_registry.go     # Provider registry + ResolveProvider
+│   │       └── auth_static.go       # StaticProvider (fixed headers)
 │   │
 │   ├── metrics/                      # Metrics & observability
-│   │   ├── collector.go             # Metrics aggregation (242 LOC)
-│   │   ├── histogram.go             # Response time histogram (139 LOC)
-│   │   └── prometheus.go            # Prometheus exporter (141 LOC)
+│   │   ├── collector.go             # Metrics aggregation
+│   │   ├── histogram.go             # Response time histogram
+│   │   └── prometheus.go            # Prometheus exporter
+│   │
+│   ├── tls/                          # TLS certificate generation & loading
+│   │   ├── generator.go             # Self-signed CA/server/client cert generation
+│   │   └── loader.go                # Cert loading + server/client TLS config helpers
 │   │
 │   └── version/                      # Version information
-│       └── version.go               # Build-time version data (64 LOC)
+│       └── version.go               # Build-time version data
 │
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                   # Continuous Integration (110 LOC)
-│   │   └── release.yml              # Release automation (43 LOC)
+│   │   ├── ci.yml                   # Continuous Integration
+│   │   └── release.yml              # Release automation
 │   └── ISSUE_TEMPLATE/
 │
-├── examples/
-│   └── radix.example.yml            # Example configuration
+├── scripts/
+│   └── smoke.sh                      # End-to-end smoke test (build + exercise all commands)
 │
-├── Makefile                         # Build automation (59 lines)
-├── .golangci.yml                    # Linter configuration (114 lines)
-├── .goreleaser.yml                  # Release configuration (160 lines)
+├── examples/
+│   ├── radix.example.yml            # Example configuration (all keys)
+│   ├── mock-routes.yml              # Example custom mock routes
+│   └── mocks/                       # Sample mock response bodies
+│
+├── Makefile                         # Build automation
+├── .golangci.yml                    # Linter configuration
+├── .goreleaser.yml                  # Release configuration
 ├── go.mod                           # Go module definition
 ├── go.sum                           # Dependency checksums
 ├── README.md                        # Project overview
 ├── CHANGELOG.md                     # Release history
 ├── CONTRIBUTING.md                  # Contributor guidelines
-├── IMPLEMENTATION_PLAN.md           # Detailed feature roadmap (1,306 LOC)
+├── IMPLEMENTATION_PLAN.md           # Detailed feature roadmap
 └── LICENSE                          # MIT License
 ```
 
@@ -111,8 +145,10 @@ radix/
 | `cmd/radix/` | Main entry point | `github.com/osuritz/radix/cmd/radix` |
 | `internal/cli/` | CLI commands (Cobra) | `github.com/osuritz/radix/internal/cli` |
 | `internal/config/` | Config management | `github.com/osuritz/radix/internal/config` |
-| `internal/server/` | HTTP servers | `github.com/osuritz/radix/internal/server` |
+| `internal/server/` | HTTP servers & handlers | `github.com/osuritz/radix/internal/server` |
+| `internal/server/middleware/` | HTTP middleware (logging, metrics, CORS, gzip, auth, security) | `github.com/osuritz/radix/internal/server/middleware` |
 | `internal/metrics/` | Metrics collection | `github.com/osuritz/radix/internal/metrics` |
+| `internal/tls/` | TLS cert generation & loading | `github.com/osuritz/radix/internal/tls` |
 | `internal/version/` | Version info | `github.com/osuritz/radix/internal/version` |
 
 **Note**: The `internal/` directory means these packages cannot be imported by external projects (Go convention).

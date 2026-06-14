@@ -823,48 +823,48 @@ mock:
   - [x] Integration test: proxy with `StaticProvider` auth headers
 
 ### Phase 6: Core Commands (HTTPS)
-- [ ] **TLS Phase 3a: Serve Command TLS**
-  - [ ] Add HTTPS support to serve command
-  - [ ] Implement HTTP/2 support
-  - [ ] Add HTTP-to-HTTPS redirect option
-  - [ ] Implement HSTS headers
-  - [ ] Integration tests with TLS
+- [x] **TLS Phase 3a: Serve Command TLS**
+  - [x] Add HTTPS support to serve command
+  - [x] Implement HTTP/2 support (automatic via Go's TLS server)
+  - [x] Add HTTP-to-HTTPS redirect option (`--http-redirect`/`--http-port`, 308)
+  - [x] Implement HSTS headers (`--hsts`/`--hsts-max-age`)
+  - [x] Integration tests with TLS
 
 - [x] **TLS Phase 3b: Proxy Command TLS**
   - [x] Add HTTPS frontend to proxy
   - [x] Implement HTTPS backend support
   - [x] Add mutual TLS (mTLS) for backends
   - [x] Backend certificate verification
-  - [ ] Integration tests with TLS
+  - [x] Integration tests with TLS
 
 ### Phase 7: Advanced Commands (HTTP)
-- [ ] Implement `echo` command (HTTP)
-  - [ ] Request inspection and formatting
-  - [ ] Configurable responses
-  - [ ] Delay simulation
-  - [ ] JSON output formatting
-  - [ ] Integrate metrics middleware
+- [x] Implement `echo` command (HTTP)
+  - [x] Request inspection and formatting
+  - [x] Configurable responses
+  - [x] Delay simulation
+  - [x] JSON output formatting
+  - [x] Integrate metrics middleware
   - [ ] Add echo-specific metrics (delays, custom responses, etc.)
-  - [ ] Tests for echo command
+  - [x] Tests for echo command
 
-- [ ] Implement `mock` command (HTTP)
-  - [ ] YAML config parsing
-  - [ ] Route matching engine
-  - [ ] Template responses ({{uuid}}, {{now}}, etc.)
-  - [ ] File watching and hot reload
-  - [ ] Integrate metrics middleware
+- [x] Implement `mock` command (HTTP)
+  - [x] YAML config parsing
+  - [x] Route matching engine
+  - [x] Template responses ({{uuid}}, {{now}}, etc.)
+  - [x] File watching and hot reload
+  - [x] Integrate metrics middleware
   - [ ] Add mock-specific metrics (route matches, template renders, config reloads)
-  - [ ] Tests for mock command
+  - [x] Tests for mock command
 
 ### Phase 8: Advanced Commands (HTTPS)
-- [ ] **TLS Phase 3c: Echo Command TLS**
-  - [ ] Add HTTPS support to echo
-  - [ ] Display TLS connection info in responses
-  - [ ] Client certificate inspection
+- [x] **TLS Phase 3c: Echo Command TLS**
+  - [x] Add HTTPS support to echo
+  - [x] Display TLS connection info in responses (version, cipher, server name)
+  - [ ] Client certificate inspection (detailed peer-cert fields)
   - [ ] Integration tests with client certs
 
-- [ ] **TLS Phase 3d: Mock Command TLS**
-  - [ ] Add HTTPS support to mock
+- [x] **TLS Phase 3d: Mock Command TLS**
+  - [x] Add HTTPS support to mock
   - [ ] Per-route TLS requirements
   - [ ] Client certificate-based routing
   - [ ] Template support for client cert fields
@@ -888,17 +888,18 @@ mock:
   - [ ] Achieve >80% code coverage
   - [ ] End-to-end TLS testing
   - [ ] Cross-platform testing
+  - [x] End-to-end smoke script exercising every command (`scripts/smoke.sh`, `make smoke`)
 - [ ] Documentation
-  - [ ] README with quickstart
-  - [ ] Command documentation
-  - [ ] TLS setup guide
-  - [ ] Example configurations
-  - [ ] Contributing guidelines
+  - [x] README with quickstart
+  - [x] Command documentation
+  - [x] TLS setup guide
+  - [x] Example configurations
+  - [x] Contributing guidelines
   - [ ] Binary verification guide (GPG)
-- [ ] Examples
-  - [ ] Basic usage examples for each command
-  - [ ] TLS configuration examples
-  - [ ] Mock API examples
+- [x] Examples
+  - [x] Basic usage examples for each command
+  - [x] TLS configuration examples
+  - [x] Mock API examples
   - [ ] Real-world use case examples
 - [ ] Distribution enhancements
   - [ ] Homebrew tap setup

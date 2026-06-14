@@ -114,6 +114,22 @@ go test -race ./...
 go test -v ./internal/cli/...
 ```
 
+### End-to-End Smoke Tests
+
+`make smoke` builds the binary and exercises every command end-to-end (version,
+validate, gencert, serve, echo, mock built-ins and custom routes, and proxy)
+against a real running server on fixed high ports, printing a PASS/FAIL line per
+check and exiting non-zero on any failure:
+
+```bash
+make smoke
+# or directly:
+bash scripts/smoke.sh
+```
+
+Run it before opening a PR that touches command behavior. It needs `curl` and a
+free port range starting at 18080.
+
 ### Code Quality
 
 Before submitting a PR:

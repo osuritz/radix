@@ -4,7 +4,8 @@
 # Global settings
 port: 8080
 host: localhost
-verbose: false
+verbose: false      # verbose request logging (Extended CLF format)
+no_color: false     # disable ANSI color in logs (also honored when output is not a TTY)
 
 # TLS settings (applies to all commands when enabled)
 tls:
@@ -52,6 +53,8 @@ proxy:
   strip_prefix: ""
   # Headers to add/modify
   headers: []
+  # CORS
+  cors: false  # add permissive CORS headers to proxied responses
   # Auth extensions (HeaderProvider interface)
   # If a fork compiles in a custom HeaderProvider (e.g., for Okta), it is
   # used automatically — no config needed here. This section is only required
