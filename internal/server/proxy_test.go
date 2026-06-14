@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/osuritz/radix/internal/server/middleware"
 )
 
 func TestNewReverseProxy_BasicForwarding(t *testing.T) {
@@ -236,6 +239,59 @@ func TestNewReverseProxy_HostHeader(t *testing.T) {
 
 	if receivedHost != targetURL.Host {
 		t.Errorf("expected Host header %q, got %q", targetURL.Host, receivedHost)
+	}
+}
+
+// TestNewReverseProxy_AnnotatesLogTarget verifies the proxy records its upstream
+// host into the request-scoped log annotation, so the dev access log renders a
+// "→ <host>" column. The proxy is wrapped in the dev logging middleware (output
+// to a buffer, so color is auto-disabled) and the emitted line is asserted.
+func TestNewReverseProxy_AnnotatesLogTarget(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+
+	targetURL, _ := url.Parse(backend.URL)
+	proxy := NewReverseProxy(ProxyConfig{Target: targetURL, Timeout: 5 * time.Second})
+
+	var buf bytes.Buffer
+	logged := middleware.Logging(middleware.LoggingConfig{
+		Format: middleware.LogFormatDev,
+		Output: &buf,
+	})(proxy)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	logged.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	wantSeg := "→ " + targetURL.Host
+	if !strings.Contains(out, wantSeg) {
+		t.Errorf("dev log missing upstream target %q: %q", wantSeg, out)
+	}
+}
+
+// TestNewReverseProxy_NilAnnotationSafe verifies the proxy does not panic when
+// no logging middleware seeded an annotation (annotation absent from context).
+func TestNewReverseProxy_NilAnnotationSafe(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	targetURL, _ := url.Parse(backend.URL)
+	proxy := NewReverseProxy(ProxyConfig{Target: targetURL, Timeout: 5 * time.Second})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req) // no logging middleware -> no annotation in context
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"strings"
+
+	"github.com/osuritz/radix/internal/server/middleware"
 )
 
 // FileServerConfig holds configuration for the static file server.
@@ -20,20 +22,41 @@ type FileServerConfig struct {
 // It wraps http.FileServer with a custom filesystem that supports SPA mode
 // (returning the index file for paths that don't match a real file) and
 // configurable index files.
+//
+// In SPA mode the handler annotates the access log with Target="fallback" on
+// exactly those requests that are served the index file because the requested
+// path did not exist — and only after the index file actually opens, so a miss
+// whose index is itself missing/unreadable (a real 404/error) is never
+// mislabelled as a fallback. Plain static-asset and real-file hits get no
+// target. The fallback decision is made deep inside http.FileServer (which does
+// not thread the request context to FileSystem.Open), so a fresh per-request
+// spaFileSystem is constructed to capture the annotation pointer — this keeps
+// the fallback signal exact (it mirrors the real Open branch) rather than
+// re-deriving it in the handler. Constructing the wrapper is cheap (it only
+// wraps the shared http.Dir root).
 func NewFileServer(cfg FileServerConfig) http.Handler {
-	fs := &spaFileSystem{
-		root:  http.Dir(cfg.Dir),
-		index: cfg.Index,
-		spa:   cfg.SPA,
-	}
-	return http.FileServer(fs)
+	root := http.Dir(cfg.Dir)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fs := &spaFileSystem{
+			root:       root,
+			index:      cfg.Index,
+			spa:        cfg.SPA,
+			annotation: middleware.LogAnnotationFromContext(r.Context()),
+		}
+		http.FileServer(fs).ServeHTTP(w, r)
+	})
 }
 
-// spaFileSystem implements http.FileSystem with SPA fallback support.
+// spaFileSystem implements http.FileSystem with SPA fallback support. It is
+// constructed per request so the optional annotation pointer is request-scoped;
+// no field is shared across concurrent requests.
 type spaFileSystem struct {
 	root  http.FileSystem
 	index string
 	spa   bool
+	// annotation, when non-nil, is the access-log annotation for the current
+	// request; it is set to Target="fallback" only when the SPA fallback fires.
+	annotation *middleware.LogAnnotation
 }
 
 // Open implements http.FileSystem. It opens the requested path, falling back
@@ -45,8 +68,22 @@ func (fs *spaFileSystem) Open(name string) (http.File, error) {
 	f, err := fs.root.Open(name)
 	if err != nil {
 		if os.IsNotExist(err) && fs.spa && !isStaticAsset(name) {
-			// SPA fallback: serve the root index file for non-asset paths
-			return fs.root.Open("/" + fs.index)
+			// SPA fallback: serve the root index file for non-asset paths.
+			indexFile, indexErr := fs.root.Open("/" + fs.index)
+			if indexErr != nil {
+				// The index itself is missing/unreadable: this request still
+				// 404s (or errors), so it was NOT served the fallback. Do not
+				// annotate — labelling it "→ fallback" would mislabel the line.
+				return nil, indexErr
+			}
+			// Annotate the access log (nil-safe) only after the fallback index
+			// actually opened, so the dev format shows "→ fallback" exactly when
+			// the fallback was served.
+			if fs.annotation != nil {
+				fs.annotation.Kind = "fileserver"
+				fs.annotation.Target = "fallback"
+			}
+			return indexFile, nil
 		}
 		return nil, err
 	}
