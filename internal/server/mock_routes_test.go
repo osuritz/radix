@@ -515,6 +515,303 @@ routes:
 	}
 }
 
+// jsonPost builds a POST request with a JSON body and the JSON content type.
+func jsonPost(path, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func TestRoutes_ConditionBodyMatch(t *testing.T) {
+	const src = `
+routes:
+  - path: /api/auth/login
+    method: POST
+    conditions:
+      - match:
+          body.username: admin
+          body.password: secret
+        response: { status: 200, body: '{"token":"{{uuid}}"}' }
+      - match:
+          body.username: "*"
+        response: { status: 401, body: '{"error":"invalid"}' }
+      - default: true
+        response: { status: 400, body: '{"error":"missing username"}' }
+`
+	t.Run("exact match wins", func(t *testing.T) {
+		rec := doRouted(t, src, false, jsonPost("/api/auth/login", `{"username":"admin","password":"secret"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		// Body templating still applies to the selected arm: {{uuid}} must render.
+		const prefix, suffix = `{"token":"`, `"}`
+		got := rec.Body.String()
+		if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+			t.Fatalf("body = %q, want a templated token payload", got)
+		}
+		tok := strings.TrimSuffix(strings.TrimPrefix(got, prefix), suffix)
+		if !uuidV4Re.MatchString(tok) {
+			t.Errorf("token = %q, not a v4 UUID (templating not applied to arm)", tok)
+		}
+	})
+
+	t.Run("wrong password falls to wildcard arm", func(t *testing.T) {
+		rec := doRouted(t, src, false, jsonPost("/api/auth/login", `{"username":"admin","password":"nope"}`))
+		if rec.Code != http.StatusUnauthorized || rec.Body.String() != `{"error":"invalid"}` {
+			t.Errorf("status=%d body=%q, want 401 invalid", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing username falls to default arm", func(t *testing.T) {
+		rec := doRouted(t, src, false, jsonPost("/api/auth/login", `{"password":"secret"}`))
+		if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"missing username"}` {
+			t.Errorf("status=%d body=%q, want 400 missing username", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestRoutes_ConditionWildcardVsExact(t *testing.T) {
+	const src = `
+routes:
+  - path: /w
+    method: POST
+    conditions:
+      - match: { body.role: admin }
+        response: { status: 200, body: "exact-admin" }
+      - match: { body.role: "*" }
+        response: { status: 200, body: "any-role" }
+      - default: true
+        response: { status: 400, body: "no-role" }
+`
+	cases := []struct {
+		name, body, want string
+	}{
+		{"exact value", `{"role":"admin"}`, "exact-admin"},
+		{"present non-empty hits wildcard", `{"role":"editor"}`, "any-role"},
+		{"empty value misses wildcard -> default", `{"role":""}`, "no-role"},
+		{"absent key -> default", `{"other":1}`, "no-role"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doRouted(t, src, false, jsonPost("/w", tc.body))
+			if got := rec.Body.String(); got != tc.want {
+				t.Errorf("body = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRoutes_ConditionQueryMatch(t *testing.T) {
+	const src = `
+routes:
+  - path: /api/search
+    method: GET
+    conditions:
+      - match: { query.q: "*" }
+        response: { status: 200, body: 'results for {{.query.q}}' }
+      - default: true
+        response: { status: 400, body: 'q required' }
+`
+	if rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/api/search?q=cats", nil)); rec.Code != http.StatusOK || rec.Body.String() != "results for cats" {
+		t.Errorf("with q: status=%d body=%q, want 200 results for cats", rec.Code, rec.Body.String())
+	}
+	if rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/api/search", nil)); rec.Code != http.StatusBadRequest || rec.Body.String() != "q required" {
+		t.Errorf("no q: status=%d body=%q, want 400 q required", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionHeaderMatch(t *testing.T) {
+	const src = `
+routes:
+  - path: /api/protected
+    method: GET
+    conditions:
+      - match: { headers.Authorization: "Bearer valid" }
+        response: { status: 200, body: "secret" }
+    response: { status: 401, body: "unauthorized" }
+`
+	// Header value matches the first arm.
+	withAuth := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
+	withAuth.Header.Set("Authorization", "Bearer valid")
+	if rec := doRouted(t, src, false, withAuth); rec.Code != http.StatusOK || rec.Body.String() != "secret" {
+		t.Errorf("valid auth: status=%d body=%q, want 200 secret", rec.Code, rec.Body.String())
+	}
+	// Missing header: no arm matches, falls back to top-level response.
+	if rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/api/protected", nil)); rec.Code != http.StatusUnauthorized || rec.Body.String() != "unauthorized" {
+		t.Errorf("missing auth: status=%d body=%q, want 401 unauthorized (top-level fallback)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionFirstMatchWins(t *testing.T) {
+	// Two arms could both match; the first in file order must win.
+	const src = `
+routes:
+  - path: /fm
+    method: POST
+    conditions:
+      - match: { body.x: "*" }
+        response: { status: 200, body: "first" }
+      - match: { body.x: hello }
+        response: { status: 200, body: "second" }
+`
+	rec := doRouted(t, src, false, jsonPost("/fm", `{"x":"hello"}`))
+	if got := rec.Body.String(); got != "first" {
+		t.Errorf("body = %q, want first (first matching arm wins)", got)
+	}
+}
+
+func TestRoutes_ConditionNoMatchNoFallback404(t *testing.T) {
+	// Conditions present, no arm matches, and no top-level response: 404.
+	const src = `
+routes:
+  - path: /strict
+    method: POST
+    conditions:
+      - match: { body.x: yes }
+        response: { status: 200, body: "ok" }
+`
+	rec := doRouted(t, src, false, jsonPost("/strict", `{"x":"no"}`))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (no arm matched, no fallback)", rec.Code)
+	}
+}
+
+func TestRoutes_ConditionTemplatingBodyField(t *testing.T) {
+	// The selected arm's body template sees the same parsed body as matching.
+	const src = `
+routes:
+  - path: /greet
+    method: POST
+    conditions:
+      - match: { body.username: "*" }
+        response: { status: 200, body: 'hello {{.body.username}}' }
+`
+	rec := doRouted(t, src, false, jsonPost("/greet", `{"username":"alice"}`))
+	if got := rec.Body.String(); got != "hello alice" {
+		t.Errorf("body = %q, want hello alice", got)
+	}
+}
+
+func TestRoutes_ConditionFormBodyMatch(t *testing.T) {
+	// body.<field> also resolves form-urlencoded values.
+	const src = `
+routes:
+  - path: /form
+    method: POST
+    conditions:
+      - match: { body.username: admin }
+        response: { status: 200, body: "form-admin" }
+      - default: true
+        response: { status: 401, body: "form-no" }
+`
+	req := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("username=admin&password=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := doRouted(t, src, false, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "form-admin" {
+		t.Errorf("status=%d body=%q, want 200 form-admin", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRoutes_ConditionFileResponse(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.json"), []byte(`{"user":"{{.body.username}}"}`), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	const src = `
+routes:
+  - path: /cf
+    method: POST
+    conditions:
+      - match: { body.username: "*" }
+        response:
+          status: 200
+          file: ./ok.json
+`
+	store := newStore(t, src, dir)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, jsonPost("/cf", `{"username":"bob"}`))
+	if got := rec.Body.String(); got != `{"user":"bob"}` {
+		t.Errorf("file arm body = %q, want templated {\"user\":\"bob\"}", got)
+	}
+}
+
+func TestRoutes_ConditionFileTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Dir(dir)
+	secret := filepath.Join(parent, "cond-secret.txt")
+	if err := os.WriteFile(secret, []byte("TOPSECRET"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	defer func() { _ = os.Remove(secret) }()
+
+	src := "routes:\n  - path: /leak\n    method: POST\n    conditions:\n      - match: { body.x: \"*\" }\n        response:\n          file: ../" + filepath.Base(secret) + "\n"
+	store := newStore(t, src, dir)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Builtin: false})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, jsonPost("/leak", `{"x":"1"}`))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for traversal in condition file", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "TOPSECRET") {
+		t.Fatal("condition file traversal leaked contents")
+	}
+}
+
+func TestRoutes_ConditionBodyTooLarge413(t *testing.T) {
+	const src = `
+routes:
+  - path: /big
+    method: POST
+    conditions:
+      - match: { body.x: "*" }
+        response: { status: 200, body: "ok" }
+`
+	big := strings.Repeat("a", maxMockBodyBytes+10)
+	rec := doRouted(t, src, false, jsonPost("/big", `{"x":"`+big+`"}`))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", rec.Code)
+	}
+}
+
+func TestRoutes_ConditionMalformedTemplateRejectedAtLoad(t *testing.T) {
+	const src = `
+routes:
+  - path: /bad
+    method: POST
+    conditions:
+      - match: { body.x: "*" }
+        response: { status: 200, body: '{{.body.x' }
+`
+	if _, err := CompileRoutes([]byte(src), t.TempDir()); err == nil {
+		t.Fatal("expected compile error for malformed condition template, got nil")
+	}
+}
+
+func TestRoutes_PlainResponseUnchanged(t *testing.T) {
+	// Backward compatibility: a route with only a plain response behaves exactly
+	// as before (status, headers, templated body all applied).
+	const src = `
+routes:
+  - path: /api/health
+    method: GET
+    response:
+      status: 201
+      headers: { Content-Type: application/json }
+      body: '{"status":"ok","p":"{{.path}}"}'
+`
+	rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+	if got := rec.Body.String(); got != `{"status":"ok","p":"/api/health"}` {
+		t.Errorf("body = %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q", ct)
+	}
+}
+
 func TestLoadRoutes_Errors(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {
@@ -572,6 +869,24 @@ func TestLoadRoutes_Errors(t *testing.T) {
 			},
 			wantSub: "invalid regex",
 		},
+		{
+			name: "bad condition match-key prefix",
+			write: func() string {
+				p := filepath.Join(dir, "ck.yml")
+				_ = os.WriteFile(p, []byte("routes:\n  - path: /c\n    conditions:\n      - match: { foo: bar }\n        response: { status: 200 }\n"), 0o600)
+				return p
+			},
+			wantSub: "invalid match key",
+		},
+		{
+			name: "route with neither conditions nor response",
+			write: func() string {
+				p := filepath.Join(dir, "empty.yml")
+				_ = os.WriteFile(p, []byte("routes:\n  - path: /nothing\n    method: GET\n"), 0o600)
+				return p
+			},
+			wantSub: "no response and no conditions",
+		},
 	}
 
 	for _, tt := range tests {
@@ -588,15 +903,14 @@ func TestLoadRoutes_Errors(t *testing.T) {
 }
 
 func TestRoutes_AdvancedKeysIgnored(t *testing.T) {
-	// conditions/sequence/random/websocket/sse are not supported; they must be
-	// ignored without error, leaving the basic response (if any) intact.
+	// sequence/random/websocket/sse are not supported; they must be ignored
+	// without error, leaving the basic response (if any) intact. (conditions are
+	// supported now; see the TestRoutes_Conditions* tests.)
 	const src = `
 routes:
   - path: /adv
     method: GET
     response: { status: 200, body: "base" }
-    conditions:
-      - match: { foo: bar }
     sequence:
       - body: "x"
     websocket: true

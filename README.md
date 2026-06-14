@@ -293,14 +293,45 @@ match the whole path (e.g. `regex:^/api/v[0-9]+/x$`).
 
 **Templating** uses idiomatic Go `text/template` syntax. Request data is
 dot-accessible: `{{.method}}`, `{{.path}}`, `{{.params.id}}`, `{{.query.q}}`,
-`{{.headers.Authorization}}`, `{{.body.field}}` (parsed JSON). Header names
-containing `-` need `index`, e.g. `{{index .headers "Content-Type"}}`.
+`{{.headers.Authorization}}`, `{{.body.field}}` (parsed JSON or form). Header
+names containing `-` need `index`, e.g. `{{index .headers "Content-Type"}}`.
 Generator functions: `{{uuid}}`, `{{now}}`, `{{timestamp}}`,
 `{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`, `{{base64 "s"}}`.
 A malformed template or render error yields a `500` (the server stays up).
 
-> Not yet supported (ignored gracefully if present): `conditions`, stateful
-> `sequence`, weighted `random`, `websocket`, and `sse`.
+**Conditional responses** let a route pick its response by matching request
+content. Add a `conditions:` block of arms; the **first** arm whose every
+`match` entry is satisfied wins (and a `default: true` arm always matches):
+
+```yaml
+routes:
+  - path: /api/auth/login
+    method: POST
+    conditions:
+      - match:
+          body.username: admin
+          body.password: secret      # all entries must match
+        response: { status: 200, body: '{"token":"{{uuid}}"}' }
+      - match:
+          body.username: "*"          # "*" = present with any non-empty value
+        response: { status: 401, body: '{"error":"invalid"}' }
+      - default: true                 # matches unconditionally (place last)
+        response: { status: 400, body: '{"error":"username required"}' }
+```
+
+Match keys are dotted and must be prefixed with `body.` (a **top-level** field
+of the parsed JSON object or a form-urlencoded value — nested paths like
+`body.a.b` are not supported), `query.` (first query value), or `headers.`
+(canonical-cased, first header value). A value of `"*"` matches when the key is
+present with any non-empty value; any other value requires an exact match. The
+selected arm's body is templated exactly like a plain response. **Precedence
+when serving:** winning arm → `default: true` arm → the route's top-level
+`response` (if any) → `404`. A route must define a `response`, a `conditions`
+block, or both (the `response` then acts as the fallback); a route with neither
+is a load error. Malformed templates and bad match-key prefixes fail at load.
+
+> Not yet supported (ignored gracefully if present): stateful `sequence`,
+> weighted `random`, `websocket`, and `sse`.
 
 ### All mock flags
 

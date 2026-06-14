@@ -111,3 +111,50 @@ routes:
     response:
       status: 200
       body: '{"message":"Finally!"}'
+
+  # Conditional responses: the route picks its response by matching request
+  # content. Arms are evaluated top to bottom; the FIRST arm whose every `match`
+  # entry is satisfied wins. Match keys are dotted and prefixed with body.,
+  # query., or headers.; a value of "*" means "present with any non-empty value"
+  # and any other value is an exact match. body.<field> resolves a TOP-LEVEL
+  # field of the parsed JSON object (or a form-urlencoded value); nested paths
+  # (body.a.b) are not supported. The selected arm's body is templated as usual.
+  #
+  # Precedence when serving: winning arm > `default: true` arm > the route's
+  # top-level `response` (if any) > 404.
+  - path: /api/auth/login
+    method: POST
+    conditions:
+      # Exact credentials -> issue a token.
+      - match:
+          body.username: admin
+          body.password: secret
+        response:
+          status: 200
+          headers: { Content-Type: application/json }
+          body: '{"token":"{{uuid}}","user":"{{.body.username}}"}'
+      # Any username present but credentials wrong -> 401.
+      - match:
+          body.username: "*"
+        response:
+          status: 401
+          body: '{"error":"invalid credentials"}'
+      # Nothing matched (e.g. username missing) -> 400.
+      - default: true
+        response:
+          status: 400
+          body: '{"error":"username is required"}'
+
+  # Conditions can also branch on a query parameter or header; a top-level
+  # `response` acts as the fallback when no arm matches.
+  - path: /api/protected
+    method: GET
+    conditions:
+      - match:
+          headers.Authorization: "Bearer valid-token"
+        response:
+          status: 200
+          body: '{"data":"secret"}'
+    response:
+      status: 401
+      body: '{"error":"missing or invalid authorization"}'

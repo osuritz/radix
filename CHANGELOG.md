@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mock conditional responses** — a custom route may carry a `conditions:` block
+  that selects its response by matching request content. Arms are evaluated in
+  file order; the first arm whose every `match` entry is satisfied wins (a
+  `default: true` arm always matches). Match keys are dotted and prefixed with
+  `body.` (top-level JSON field or form value), `query.`, or `headers.`; a value
+  of `"*"` means "present with any non-empty value", any other value is an exact
+  match. Precedence when serving: winning arm → default arm → the route's
+  top-level `response` (fallback) → `404`. Each arm's body template (inline or
+  `file:`) is compiled at load and `file:` arms keep the same traversal guard;
+  the request body is parsed once and shared by matching and templating.
 - **`proxy.auth.provider` selection** — the proxy now honors `proxy.auth.provider`
   to choose among multiple compiled-in `HeaderProvider`s by name. A configured
   name that isn't registered is a hard startup error (rather than silently
