@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Path-based status (`--status-from-path`, e.g. `/404`, `/status/500`) and delay (`--delay-from-path`, e.g. `/delay/2`, `/delay/500ms`, capped at 10s)
   - `/_health` and `/_ready` endpoints, CORS support (`--cors`)
   - TLS/HTTPS listener support, metrics integration, and graceful shutdown
+- `radix mock` command with built-in httpbin-style endpoints
+  - HTTP method endpoints: `/get`, `/post`, `/put`, `/patch`, `/delete` returning httpbin-style JSON (args, headers, origin, url, method; plus data/json/form for body methods)
+  - `/anything` and `/anything/` (subtree, any sub-path) for any HTTP method
+  - Request inspection: `/headers`, `/ip`, `/user-agent`, `/uuid` (RFC 4122 v4)
+  - `/status/{code}` (single or comma-separated random choice, validated to [200,599])
+  - `/delay/{n}` (Go duration or bare seconds, capped at 10s, context-aware)
+  - `/bytes/{n}` (random bytes, capped at 100KB, with correct Content-Length)
+  - Response formats: `/json`, `/html`, `/xml`
+  - Global latency (`--latency`, `--latency-jitter`) and chaos (`--fail-rate`, `--fail-status`)
+  - Endpoint toggling (`--builtin`), path prefix (`--prefix`), CORS (`--cors`)
+  - `/_health` and `/_ready` endpoints (kept at root), TLS/HTTPS, metrics, and graceful shutdown
 - `radix serve` command for static file serving
   - SPA mode (--spa) for single page applications
   - CORS headers (--cors)

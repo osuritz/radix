@@ -126,6 +126,64 @@ For static headers, use `--header`. For dynamic token injection, see `IMPLEMENTA
 | `--tls-skip-verify` | `false` | Skip TLS certificate verification for backend |
 | `--websocket` | `false` | Enable explicit WebSocket support |
 
+## Mock Server
+
+The `mock` command starts a zero-config API mock server exposing httpbin-style built-in endpoints, plus global latency and chaos (random failure) knobs. It is useful for frontend development without a backend, and for exercising HTTP clients against predictable responses.
+
+### Basic usage
+
+```bash
+# Built-in endpoints on :8080
+radix mock
+
+# Inspect a request (returns args, headers, origin, url, method)
+curl localhost:8080/get?foo=bar
+
+# Echo a POST body back as JSON
+curl -X POST localhost:8080/post -d '{"hi":"there"}' -H 'Content-Type: application/json'
+```
+
+### Built-in endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /get`, `POST /post`, `PUT /put`, `PATCH /patch`, `DELETE /delete` | httpbin-style request description (body methods also include `data`/`json`/`form`) |
+| `ANY /anything`, `ANY /anything/` | Same description for any method (`/anything/` matches any sub-path) |
+| `GET /headers` | Request headers |
+| `GET /ip` | Client origin IP |
+| `GET /user-agent` | User-Agent header |
+| `GET /uuid` | A random v4 UUID |
+| `ANY /status/{code}` | Respond with that status (comma list picks one at random) |
+| `ANY /delay/{n}` | Delay n seconds (max 10), then return the `/get`-style JSON |
+| `GET /bytes/{n}` | n random bytes (max 100KB) as `application/octet-stream` |
+| `GET /json`, `GET /html`, `GET /xml` | Sample document with the matching Content-Type |
+
+### Latency and chaos
+
+```bash
+# Add 200ms latency (with optional jitter) to every response
+radix mock --latency 200ms --latency-jitter 100ms
+
+# Fail 10% of requests with a 503
+radix mock --fail-rate 10 --fail-status 503
+```
+
+### All mock flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--builtin` | `true` | Register the built-in httpbin-style endpoints |
+| `--prefix` | | Mount built-ins under a path prefix (e.g. `/_test` → `/_test/get`) |
+| `--latency` | `0` | Fixed artificial latency (e.g. `200ms`, `1s`) |
+| `--latency-jitter` | `0` | Random jitter added to latency |
+| `--fail-rate` | `0` | Random failure rate, percentage 0-100 |
+| `--fail-status` | `500` | Status code returned for random failures |
+| `--cors` | `false` | Enable permissive CORS headers |
+| `--port` | `8080` | Port to listen on |
+| `--tls` | `false` | Serve the mock over HTTPS |
+
+> Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Custom YAML routes, templating, and hot-reload are planned for a later release.
+
 ## Development
 
 ### Building

@@ -84,7 +84,17 @@ echo:
 
 # Mock command configuration
 mock:
+  # Built-in httpbin-style endpoints (/get, /post, /status/{code}, etc.)
+  builtin: true            # register the built-in endpoints
+  prefix: ""               # mount built-ins under a prefix, e.g. /_test -> /_test/get
+
+  # Global behavior applied to every built-in response
+  latency: "0"             # fixed artificial latency (e.g. 200ms, 1s)
+  latency_jitter: "0"      # random jitter added to latency (e.g. 100ms)
+  fail_rate: 0.0           # random failure rate, percentage 0-100
+  fail_status: 500         # status code returned for random failures
+  cors: false              # add permissive CORS headers to responses
+
+  # Custom routes and hot-reload (reserved for a later release; currently unused)
   routes: ./mocks/routes.yml
-  watch: true
-  latency: "0"
-  fail_rate: 0.0
+  watch: false
