@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-14
+
 ### Added
 
 - **`dev` access-log `→ target` column** — the developer-friendly log line now
@@ -243,7 +245,8 @@ shutdown.
 ### Note
 This is an alpha release to test the release workflow. Server commands (serve, proxy, echo, mock) are not yet implemented.
 
-[Unreleased]: https://github.com/osuritz/radix/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/osuritz/radix/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/osuritz/radix/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/osuritz/radix/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/osuritz/radix/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/osuritz/radix/compare/v0.1.0-alpha.1...v0.2.0
