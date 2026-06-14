@@ -403,6 +403,47 @@ the per-request validation described above.
 
 > Note: `/_metrics`, `/_health`, and `/_ready` stay at the root regardless of `--prefix`. Routes-file `settings` are overridden by explicitly-set CLI flags. A file value of `cors: false` or `fail_rate: 0` is honored as written (an explicit zero/false is distinct from an omitted field).
 
+## Logging
+
+Every command logs each request through a small access-log middleware. Three
+formats are available:
+
+- **`dev`** (default) — a polished, single-line, color-coded format tuned for
+  reading at a glance during local development. Columns, in order: a dimmed
+  short timestamp (`HH:MM:SS`), the HTTP method (color-coded, padded so paths
+  align), the request path (padded, with overly long paths truncated by a
+  single `…` so the columns stay aligned), the status code (color-coded), the
+  latency, and — only when the response had a body — a human-readable size. A
+  zero-size response omits the size column entirely.
+
+  ```
+  14:23:01 GET     /index.html                  200 12ms 2.3KB
+  14:23:01 POST    /api/users                   201 8ms 142B
+  14:23:01 DELETE  /users/123                    204 5ms
+  ```
+
+- **`clf`** — Common Log Format.
+- **`extended_clf`** — Common Log Format plus referrer and user-agent. This is
+  what `--verbose` selects.
+
+Both CLF formats are byte-for-byte the classic layouts and are unaffected by the
+color settings below.
+
+### Color control
+
+Color for the `dev` format is decided once at startup, in this precedence
+(first match wins):
+
+1. `--no-color` (or `no_color` in config) → color **off**.
+2. else the [`NO_COLOR`](https://no-color.org) environment variable is set and
+   non-empty → color **off**.
+3. else `FORCE_COLOR` or `CLICOLOR_FORCE` is set and non-empty → color **on**
+   (this only overrides the TTY auto-detection in the next step; it can never
+   re-enable color past steps 1–2).
+4. else the output is not a TTY (e.g. redirected to a file or a pipe) → color
+   **off**.
+5. otherwise → color **on**.
+
 ## TLS Certificates
 
 The `gencert` command generates self-signed certificates for local HTTPS. By

@@ -3,7 +3,11 @@ package middleware
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,10 +23,41 @@ const (
 	LogFormatDev LogFormat = "dev"
 )
 
+// Dev-format column layout constants.
+//
+// The dev line is a single, aligned row tuned to read like a Vite-style dev
+// log. Methods are padded to a fixed width so request paths line up across
+// rows; paths are padded (and truncated with a single ellipsis) so the status,
+// latency and size columns stay aligned regardless of path length.
+const (
+	// devMethodWidth left-justifies the HTTP method (e.g. "GET    ") so paths
+	// align across methods of differing length. "DELETE" (6) and "OPTIONS" (7)
+	// are the longest common methods, so 7 keeps every standard method padded
+	// without an extra space.
+	devMethodWidth = 7
+	// devPathWidth left-justifies the request path so the status column starts
+	// at a fixed offset. Paths longer than this are truncated with a single
+	// ellipsis; shorter paths are space-padded.
+	devPathWidth = 28
+)
+
+// ANSI escape codes used by the dev format.
+const (
+	ansiReset = "\033[0m"
+	ansiDim   = "\033[2m"
+)
+
 // LoggingConfig holds configuration for the logging middleware
 type LoggingConfig struct {
-	Format  LogFormat
+	// Format selects the access-log output format (dev, clf, extended_clf).
+	Format LogFormat
+	// NoColor disables ANSI coloring of the dev format unconditionally. It is
+	// the highest-priority color control; see resolveColor for full precedence.
 	NoColor bool
+	// Output is the destination for all log lines (dev, CLF and Extended CLF).
+	// When nil it defaults to os.Stdout. Injecting a writer makes the middleware
+	// testable and lets callers redirect logs.
+	Output io.Writer
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and response size
@@ -46,8 +81,27 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return size, err
 }
 
-// Logging returns a middleware that logs HTTP requests
+// Logging returns a middleware that logs HTTP requests.
+//
+// The output writer and the dev-format color decision are resolved once, here,
+// and captured in the returned closure: environment (NO_COLOR) and TTY state do
+// not change at runtime, so there is no reason to re-evaluate them per request.
+// Writes are serialized under a mutex and each line is assembled into a single
+// string before being written, so concurrent requests never interleave output.
 func Logging(config LoggingConfig) func(http.Handler) http.Handler {
+	out := config.Output
+	if out == nil {
+		out = os.Stdout
+	}
+	color := resolveColor(config.NoColor, out)
+
+	var mu sync.Mutex
+	write := func(line string) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = io.WriteString(out, line)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -64,31 +118,70 @@ func Logging(config LoggingConfig) func(http.Handler) http.Handler {
 
 			// Log after request is complete
 			duration := time.Since(start)
-			logRequest(r, wrapped.status, wrapped.size, duration, config)
+			write(formatRequest(r, wrapped.status, wrapped.size, duration, config.Format, color))
 		})
 	}
 }
 
-// logRequest logs the request in the specified format
-func logRequest(r *http.Request, status, size int, duration time.Duration, config LoggingConfig) {
-	switch config.Format {
+// resolveColor decides whether dev-format ANSI coloring is enabled.
+//
+// Precedence (first match wins):
+//  1. noColor (--no-color / cfg.NoColor) true  -> OFF.
+//  2. else NO_COLOR env set and non-empty       -> OFF (https://no-color.org).
+//  3. else FORCE_COLOR or CLICOLOR_FORCE set    -> ON (overrides only the TTY
+//     check below; it can never re-enable color past steps 1 or 2).
+//  4. else writer is not a TTY (char device)    -> OFF.
+//  5. else                                       -> ON.
+//
+// TTY detection is stdlib-only: the writer is type-asserted to *os.File and
+// Stat()ed; any non-*os.File writer (e.g. bytes.Buffer) is treated as non-TTY.
+func resolveColor(noColor bool, w io.Writer) bool {
+	if noColor {
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("FORCE_COLOR") != "" || os.Getenv("CLICOLOR_FORCE") != "" {
+		return true
+	}
+	return isTerminal(w)
+}
+
+// isTerminal reports whether w is a character device (a TTY). Only *os.File can
+// be a terminal; every other writer is treated as non-TTY.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// formatRequest renders a request into a single log line (newline-terminated)
+// for the given format. CLF and Extended CLF are byte-identical to their
+// historical output; only dev coloring is gated on color.
+func formatRequest(r *http.Request, status, size int, duration time.Duration, format LogFormat, color bool) string {
+	switch format {
 	case LogFormatCLF:
-		logCLF(r, status, size)
+		return formatCLF(r, status, size)
 	case LogFormatExtendedCLF:
-		logExtendedCLF(r, status, size)
+		return formatExtendedCLF(r, status, size)
 	case LogFormatDev:
-		logDev(r, status, size, duration, config.NoColor)
+		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color)
 	default:
-		logDev(r, status, size, duration, config.NoColor)
+		return formatDevLine(time.Now(), r.Method, r.RequestURI, status, size, duration, color)
 	}
 }
 
-// logCLF logs in Common Log Format
-// Format: host ident authuser date request status bytes
-// Example: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.0" 200 2326
-func logCLF(r *http.Request, status, size int) {
-	// Extract client IP
-	host := r.RemoteAddr
+// clientHost extracts the client IP (host portion) from r.RemoteAddr, dropping
+// the port. Preserved verbatim from the original CLF implementation.
+func clientHost(remoteAddr string) string {
+	host := remoteAddr
 	if colon := len(host) - 1; colon >= 0 {
 		for i := colon; i >= 0; i-- {
 			if host[i] == ':' {
@@ -97,15 +190,22 @@ func logCLF(r *http.Request, status, size int) {
 			}
 		}
 	}
+	return host
+}
 
-	// Format timestamp in CLF format
+// formatCLF renders Common Log Format.
+// Format: host ident authuser date request status bytes
+// Example: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.0" 200 2326
+func formatCLF(r *http.Request, status, size int) string {
+	host := clientHost(r.RemoteAddr)
 	timestamp := time.Now().Format("02/Jan/2006:15:04:05 -0700")
-
-	// Build request line
 	requestLine := fmt.Sprintf("%s %s %s", r.Method, r.RequestURI, r.Proto)
 
-	// CLF format
-	fmt.Printf("%s - - [%s] \"%s\" %d %d\n",
+	// %q is intentionally NOT used here: the CLF output must stay byte-identical
+	// to the historical format, and %q would escape special characters in the
+	// request line differently. The explicit \"...\" quoting is load-bearing.
+	//nolint:gocritic // sprintfQuotedString: literal quoting preserves byte-identical CLF output.
+	return fmt.Sprintf("%s - - [%s] \"%s\" %d %d\n",
 		host,
 		timestamp,
 		requestLine,
@@ -114,28 +214,14 @@ func logCLF(r *http.Request, status, size int) {
 	)
 }
 
-// logExtendedCLF logs in Extended Common Log Format
+// formatExtendedCLF renders Extended Common Log Format.
 // Format: CLF + "referrer" "user-agent"
 // Example: 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /index.html HTTP/1.0" 200 2326 "http://example.com" "Mozilla/5.0"
-func logExtendedCLF(r *http.Request, status, size int) {
-	// Extract client IP
-	host := r.RemoteAddr
-	if colon := len(host) - 1; colon >= 0 {
-		for i := colon; i >= 0; i-- {
-			if host[i] == ':' {
-				host = host[:i]
-				break
-			}
-		}
-	}
-
-	// Format timestamp in CLF format
+func formatExtendedCLF(r *http.Request, status, size int) string {
+	host := clientHost(r.RemoteAddr)
 	timestamp := time.Now().Format("02/Jan/2006:15:04:05 -0700")
-
-	// Build request line
 	requestLine := fmt.Sprintf("%s %s %s", r.Method, r.RequestURI, r.Proto)
 
-	// Get referrer and user-agent
 	referrer := r.Header.Get("Referer")
 	if referrer == "" {
 		referrer = "-"
@@ -146,8 +232,9 @@ func logExtendedCLF(r *http.Request, status, size int) {
 		userAgent = "-"
 	}
 
-	// Extended CLF format
-	fmt.Printf("%s - - [%s] \"%s\" %d %d \"%s\" \"%s\"\n",
+	// See formatCLF: literal \"...\" quoting is required for byte-identical output.
+	//nolint:gocritic // sprintfQuotedString: literal quoting preserves byte-identical Extended CLF output.
+	return fmt.Sprintf("%s - - [%s] \"%s\" %d %d \"%s\" \"%s\"\n",
 		host,
 		timestamp,
 		requestLine,
@@ -158,40 +245,96 @@ func logExtendedCLF(r *http.Request, status, size int) {
 	)
 }
 
-// logDev logs in developer-friendly format with optional colors
-// Format: METHOD /path STATUS SIZE DURATION
-// Example: GET /index.html 200 2326 12ms
-func logDev(r *http.Request, status, size int, duration time.Duration, noColor bool) {
-	// Format duration
-	durationStr := formatDuration(duration)
+// formatDevLine renders the polished, developer-friendly dev line.
+//
+// Layout (newline-terminated), columns in order:
+//
+//	<dim HH:MM:SS> <method,padded> <path,padded/truncated> <status> <latency>[ <size>]
+//
+// e.g. (no color):
+//
+//	14:23:01 GET     /index.html                  200 12ms 2.3KB
+//
+// The timestamp is dimmed, the method is colored via getMethodColor, and the
+// status is colored via getStatusColor when color is true. The size column is
+// omitted entirely when size == 0 (no "-" placeholder). now is injected so the
+// formatter is deterministically testable.
+func formatDevLine(now time.Time, method, uri string, status, size int, d time.Duration, color bool) string {
+	ts := now.Format("15:04:05")
+	paddedMethod := padRight(method, devMethodWidth)
+	paddedPath := padRight(truncatePath(uri, devPathWidth), devPathWidth)
+	durationStr := formatDuration(d)
 
-	// Format size
-	sizeStr := formatSize(size)
+	var b strings.Builder
 
-	if noColor {
-		// No color output
-		fmt.Printf("%s %s %d %s %s\n",
-			r.Method,
-			r.RequestURI,
-			status,
-			sizeStr,
-			durationStr,
-		)
+	// Timestamp (dimmed).
+	if color {
+		b.WriteString(ansiDim)
+		b.WriteString(ts)
+		b.WriteString(ansiReset)
 	} else {
-		// Colored output
-		methodColor := getMethodColor(r.Method)
-		statusColor := getStatusColor(status)
-
-		fmt.Printf("%s%s\033[0m %s %s%d\033[0m %s %s\n",
-			methodColor,
-			r.Method,
-			r.RequestURI,
-			statusColor,
-			status,
-			sizeStr,
-			durationStr,
-		)
+		b.WriteString(ts)
 	}
+	b.WriteByte(' ')
+
+	// Method (colored, padded).
+	if color {
+		b.WriteString(getMethodColor(method))
+		b.WriteString(paddedMethod)
+		b.WriteString(ansiReset)
+	} else {
+		b.WriteString(paddedMethod)
+	}
+	b.WriteByte(' ')
+
+	// Path (padded / truncated).
+	b.WriteString(paddedPath)
+	b.WriteByte(' ')
+
+	// Status (colored).
+	if color {
+		b.WriteString(getStatusColor(status))
+		fmt.Fprintf(&b, "%d", status)
+		b.WriteString(ansiReset)
+	} else {
+		fmt.Fprintf(&b, "%d", status)
+	}
+	b.WriteByte(' ')
+
+	// Latency.
+	b.WriteString(durationStr)
+
+	// Size (optional; omitted when zero).
+	if size > 0 {
+		b.WriteByte(' ')
+		b.WriteString(formatSize(size))
+	}
+
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// padRight left-justifies s to width with trailing spaces. Strings already at
+// or beyond width are returned unchanged (callers truncate first where needed).
+func padRight(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+// truncatePath shortens path to at most width runes, replacing the trailing
+// overflow with a single ellipsis ('…') so columns stay aligned. Paths within
+// width are returned unchanged.
+func truncatePath(path string, width int) string {
+	runes := []rune(path)
+	if len(runes) <= width {
+		return path
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 // getMethodColor returns ANSI color code for HTTP method
