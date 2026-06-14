@@ -23,6 +23,7 @@ var (
 	proxyRewrite       string
 	proxyStripPrefix   string
 	proxyTimeout       string
+	proxyFlushInterval time.Duration
 	proxyWebSocket     bool
 	proxyTLSSkipVerify bool
 	proxyHeaders       []string
@@ -55,6 +56,8 @@ func init() {
 	proxyCmd.Flags().StringVar(&proxyRewrite, "rewrite", "", "path rewrite rule (from:to format)")
 	proxyCmd.Flags().StringVar(&proxyStripPrefix, "strip-prefix", "", "strip path prefix before forwarding")
 	proxyCmd.Flags().StringVar(&proxyTimeout, "timeout", "", "backend response timeout (e.g., 30s, 1m)")
+	proxyCmd.Flags().DurationVar(&proxyFlushInterval, "flush-interval", -1*time.Nanosecond,
+		"response flush interval for streaming; negative (e.g. -1ns) flushes immediately, 0 uses default (default -1ns)")
 	proxyCmd.Flags().BoolVar(&proxyWebSocket, "websocket", false, "enable explicit WebSocket support")
 	proxyCmd.Flags().BoolVar(&proxyTLSSkipVerify, "tls-skip-verify", false, "skip TLS certificate verification for backend")
 	proxyCmd.Flags().StringArrayVar(&proxyHeaders, "header", nil, "add header to proxy requests (Key: Value)")
@@ -81,6 +84,9 @@ func applyProxyFlags(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid timeout %q: %w", proxyTimeout, err)
 		}
 		cfg.Proxy.Timeout = d
+	}
+	if cmd.Flags().Changed("flush-interval") {
+		cfg.Proxy.FlushInterval = proxyFlushInterval
 	}
 	if cmd.Flags().Changed("websocket") {
 		cfg.Proxy.WebSocket = proxyWebSocket
@@ -134,11 +140,12 @@ func runProxy(cmd *cobra.Command, args []string) error {
 
 	// Build reverse proxy handler
 	proxyHandler := server.NewReverseProxy(server.ProxyConfig{
-		Target:      targetURL,
-		Timeout:     cfg.Proxy.Timeout,
-		StripPrefix: cfg.Proxy.StripPrefix,
-		Rewrite:     cfg.Proxy.Rewrite,
-		TLSConfig:   backendTLS,
+		Target:        targetURL,
+		Timeout:       cfg.Proxy.Timeout,
+		StripPrefix:   cfg.Proxy.StripPrefix,
+		Rewrite:       cfg.Proxy.Rewrite,
+		TLSConfig:     backendTLS,
+		FlushInterval: cfg.Proxy.FlushInterval,
 	})
 
 	// Build handler chain using a mux

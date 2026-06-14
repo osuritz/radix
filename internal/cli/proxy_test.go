@@ -20,7 +20,7 @@ func TestProxyCmd_Registered(t *testing.T) {
 }
 
 func TestProxyCmd_Flags(t *testing.T) {
-	flags := []string{"target", "rewrite", "strip-prefix", "timeout", "websocket", "tls-skip-verify", "header", "cors"}
+	flags := []string{"target", "rewrite", "strip-prefix", "timeout", "flush-interval", "websocket", "tls-skip-verify", "header", "cors"}
 	for _, name := range flags {
 		if proxyCmd.Flags().Lookup(name) == nil {
 			t.Errorf("flag %q not registered on proxy command", name)
@@ -113,6 +113,7 @@ func TestProxyCmd_FlagDefaults(t *testing.T) {
 		{"rewrite", "rewrite", ""},
 		{"strip-prefix", "strip-prefix", ""},
 		{"timeout", "timeout", ""},
+		{"flush-interval", "flush-interval", "-1ns"},
 		{"websocket", "websocket", "false"},
 		{"tls-skip-verify", "tls-skip-verify", "false"},
 		{"cors", "cors", "false"},

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Path prefix stripping (`--strip-prefix`)
   - Custom header injection (`--header "Key: Value"`)
   - Configurable timeout (`--timeout`)
+  - Streaming response support with configurable flush interval (`--flush-interval`, defaults to immediate flush for SSE / agent-chat backends; sets `X-Accel-Buffering: no` and `Cache-Control: no-cache` on detected streaming content types)
+  - Secure forwarded headers: sets X-Forwarded-For/-Host/-Proto from the inbound request and strips client-supplied (spoofable) values rather than trusting or appending them
   - Backend TLS support (--tls-skip-verify, backend CA/cert/key)
   - CORS support (`--cors`)
   - Auth header injection via HeaderProvider middleware

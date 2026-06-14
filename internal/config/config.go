@@ -74,6 +74,12 @@ type ProxyConfig struct {
 	Headers       []string      `mapstructure:"headers"`
 	CORS          bool          `mapstructure:"cors"`
 	Auth          AuthConfig    `mapstructure:"auth"`
+
+	// FlushInterval controls response flushing for streaming backends.
+	// -1 flushes immediately after each write (default; best for SSE / agent
+	// chat), 0 uses Go's default buffering, and a positive value flushes
+	// periodically at that interval.
+	FlushInterval time.Duration `mapstructure:"flush_interval"`
 }
 
 // EchoConfig represents configuration for the echo command
@@ -175,6 +181,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("proxy.timeout", "30s")
 	v.SetDefault("proxy.websocket", false)
 	v.SetDefault("proxy.tls_skip_verify", false)
+	// Immediate flush by default: best for a dev proxy serving agent/chat SSE.
+	v.SetDefault("proxy.flush_interval", -1*time.Nanosecond)
 
 	// Echo defaults
 	v.SetDefault("echo.delay", "0")
