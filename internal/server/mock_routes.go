@@ -2,7 +2,11 @@ package server
 
 import (
 	"bytes"
+	"crypto/md5"  //nolint:gosec // md5 is offered only for non-security mock fixture generation, never for auth/integrity.
+	"crypto/sha1" //nolint:gosec // sha1 is offered only for non-security mock fixture generation, never for auth/integrity.
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"text/template"
 	"time"
 
@@ -28,6 +33,48 @@ const regexRoutePrefix = "regex:"
 // routeAlphanumeric is the alphabet used by the {{randomString n}} template
 // helper.
 const routeAlphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// loremWords is the static word pool the {{lorem n}} template helper draws from.
+// It is a small, hand-rolled list (no external faker/lorem dependency) — enough
+// variety for readable placeholder copy without pulling in a package.
+var loremWords = []string{
+	"lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+	"sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+	"magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+	"exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
+	"consequat", "duis", "aute", "irure", "in", "reprehenderit", "voluptate",
+	"velit", "esse", "cillum", "fugiat", "nulla", "pariatur", "excepteur", "sint",
+	"occaecat", "cupidatat", "non", "proident", "sunt", "culpa", "qui", "officia",
+	"deserunt", "mollit", "anim", "id", "est", "laborum",
+}
+
+// fakerFirstNames, fakerLastNames, fakerStreets, fakerCities, fakerEmailDomains,
+// and fakerStreetSuffixes are small static pools backing the {{faker.*}} helpers.
+// They are deliberately hand-rolled (no external faker dependency) and only need
+// enough entries to produce plausible, varied placeholder data.
+var (
+	fakerFirstNames = []string{
+		"Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi",
+		"Ivan", "Judy", "Mallory", "Niaj", "Olivia", "Peggy", "Rupert", "Sybil",
+		"Trent", "Victor", "Walter", "Wendy",
+	}
+	fakerLastNames = []string{
+		"Anderson", "Brown", "Clark", "Davis", "Evans", "Garcia", "Harris",
+		"Johnson", "Jones", "Lee", "Martinez", "Miller", "Moore", "Nguyen",
+		"Smith", "Taylor", "Thomas", "Walker", "White", "Wilson",
+	}
+	fakerStreets = []string{
+		"Maple", "Oak", "Pine", "Cedar", "Elm", "Washington", "Lake", "Hill",
+		"Park", "Sunset", "Lincoln", "River", "Spring", "Highland", "Forest",
+	}
+	fakerStreetSuffixes = []string{"St", "Ave", "Rd", "Blvd", "Ln", "Way", "Dr"}
+	fakerCities         = []string{
+		"Springfield", "Riverton", "Fairview", "Madison", "Georgetown",
+		"Franklin", "Clinton", "Greenville", "Bristol", "Salem", "Newport",
+		"Ashland", "Burlington", "Manchester", "Oxford",
+	}
+	fakerEmailDomains = []string{"example.com", "example.org", "example.net", "test.dev"}
+)
 
 // FallbackType selects what happens when no custom route and no built-in
 // endpoint matches a request.
@@ -188,6 +235,7 @@ type compiledResponse struct {
 	headers  map[string]string
 	bodyTmpl *template.Template // parsed inline body template (nil when file-backed or empty)
 	filePath string             // file: response body path, relative to baseDir (empty when inline)
+	seq      *atomic.Uint64     // owning route's {{seq}} counter, threaded to per-request file templates
 }
 
 // compiledCondition is the precompiled form of a ConditionYAML: a set of match
@@ -247,6 +295,16 @@ type compiledRoute struct {
 	// conditions, when non-empty, select the response by request content;
 	// evaluated in order, first satisfied arm wins. See compiledRoute.serve.
 	conditions []compiledCondition
+
+	// seq is this route's private monotonic counter, backing the {{seq}} template
+	// helper. It is allocated fresh per compileRoute call and shared by every
+	// template this route owns (top-level body, file body, and each condition
+	// arm), so all of a route's templates draw from one sequence. Because a
+	// hot-reload builds entirely new compiledRoute values, the counter resets to
+	// 0 on every reload. It is a pointer so the closures captured in the route's
+	// FuncMaps mutate this route's counter (not a copy). Future sequence/conditions
+	// work (#39) can reuse this same per-route counter.
+	seq *atomic.Uint64
 }
 
 // CompiledRoutes is the immutable, request-time representation of a routes file.
@@ -403,6 +461,7 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		methods:     methodSet(rd),
 		delay:       rd.Delay.Duration(),
 		delayJitter: rd.DelayJitter.Duration(),
+		seq:         new(atomic.Uint64),
 	}
 	if cr.delay < 0 || cr.delayJitter < 0 {
 		return compiledRoute{}, errors.New("delay and delay_jitter must not be negative")
@@ -435,14 +494,14 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 	// only an explicit response is used as a fallback; absent → 404.
 	cr.hasResp = rd.Response != nil
 	if cr.hasResp {
-		resp, err := compileResponse(*rd.Response)
+		resp, err := compileResponse(*rd.Response, cr.seq)
 		if err != nil {
 			return compiledRoute{}, err
 		}
 		cr.resp = resp
 	}
 
-	conds, err := compileConditions(rd.Conditions)
+	conds, err := compileConditions(rd.Conditions, cr.seq)
 	if err != nil {
 		return compiledRoute{}, err
 	}
@@ -466,18 +525,21 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 // inline body that fails to parse is a load-time error so broken templates are
 // caught before serving; file bodies are read and parsed per request (they live
 // outside the config and may change), so only the presence of a path is
-// validated here.
-func compileResponse(resp ResponseYAML) (compiledResponse, error) {
+// validated here. seq is the owning route's {{seq}} counter, recorded so a
+// per-request file template draws from the same sequence as the route's inline
+// templates.
+func compileResponse(resp ResponseYAML, seq *atomic.Uint64) (compiledResponse, error) {
 	out := compiledResponse{
 		status:   resp.Status,
 		headers:  resp.Headers,
 		filePath: strings.TrimSpace(resp.File),
+		seq:      seq,
 	}
 	if out.status == 0 {
 		out.status = http.StatusOK
 	}
 	if resp.Body != "" {
-		tmpl, err := parseRouteTemplate("body", resp.Body)
+		tmpl, err := parseRouteTemplate("body", resp.Body, seq)
 		if err != nil {
 			return compiledResponse{}, err
 		}
@@ -489,15 +551,16 @@ func compileResponse(resp ResponseYAML) (compiledResponse, error) {
 // compileConditions parses a route's condition arms, compiling each arm's match
 // rules and response body template at load time so malformed templates and bad
 // match keys fail fast. Arm order is preserved (first-match-wins at request
-// time).
-func compileConditions(conds []ConditionYAML) ([]compiledCondition, error) {
+// time). seq is the owning route's {{seq}} counter, shared by every arm's
+// response template.
+func compileConditions(conds []ConditionYAML, seq *atomic.Uint64) ([]compiledCondition, error) {
 	if len(conds) == 0 {
 		return nil, nil
 	}
 	out := make([]compiledCondition, 0, len(conds))
 	for i := range conds {
 		c := &conds[i]
-		resp, err := compileResponse(c.Response)
+		resp, err := compileResponse(c.Response, seq)
 		if err != nil {
 			return nil, fmt.Errorf("condition #%d: %w", i+1, err)
 		}
@@ -558,8 +621,10 @@ func parseMatchKey(rawKey string) (matchKind, string, error) {
 }
 
 // parseRouteTemplate parses a template string with the route FuncMap installed.
-func parseRouteTemplate(name, text string) (*template.Template, error) {
-	t, err := template.New(name).Funcs(routeFuncMap()).Parse(text)
+// seq is the owning route's {{seq}} counter, captured by the FuncMap's seq
+// closure so the helper increments that specific route's sequence.
+func parseRouteTemplate(name, text string, seq *atomic.Uint64) (*template.Template, error) {
+	t, err := template.New(name).Funcs(routeFuncMap(seq)).Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
@@ -902,7 +967,7 @@ func (resp *compiledResponse) renderFileBody(data map[string]any, baseDir string
 	if err != nil {
 		return nil, fmt.Errorf("read file body %q: %w", resp.filePath, err)
 	}
-	tmpl, err := parseRouteTemplate("file", string(raw))
+	tmpl, err := parseRouteTemplate("file", string(raw), resp.seq)
 	if err != nil {
 		return nil, err
 	}
@@ -1082,7 +1147,12 @@ func parseFormBodyFirstValues(raw []byte, contentType string) any {
 // bodies. Generators use math/rand/v2 (acceptable for mock data; not security
 // sensitive). uuid wraps uuidV4 so a RNG error surfaces as a template error
 // (which the handler turns into a 500) rather than crashing.
-func routeFuncMap() template.FuncMap {
+//
+// seq is the owning route's private counter, captured by the {{seq}} closure so
+// the helper increments that specific route's sequence. Because a hot-reload
+// rebuilds every compiledRoute (and thus allocates a fresh counter), {{seq}}
+// naturally restarts at 1 after a reload.
+func routeFuncMap(seq *atomic.Uint64) template.FuncMap {
 	return template.FuncMap{
 		"uuid": func() (string, error) {
 			u, err := uuidV4()
@@ -1091,13 +1161,40 @@ func routeFuncMap() template.FuncMap {
 			}
 			return u, nil
 		},
-		"now":       func() string { return time.Now().UTC().Format(time.RFC3339) },
+		// now formats the current UTC time. Called with no args it returns RFC3339
+		// (backward-compatible); an optional first argument is a Go reference layout
+		// (e.g. "2006-01-02") used instead. Extra args are ignored.
+		"now": func(layout ...string) string {
+			t := time.Now().UTC()
+			if len(layout) > 0 && layout[0] != "" {
+				return t.Format(layout[0])
+			}
+			return t.Format(time.RFC3339)
+		},
 		"timestamp": func() int64 { return time.Now().Unix() },
 		"random": func(low, high int) (int, error) {
 			if high <= low {
 				return 0, fmt.Errorf("random: high (%d) must be greater than low (%d)", high, low)
 			}
 			return low + mathrand.IntN(high-low), nil
+		},
+		// randomFloat returns a float64 in [min, max). min and max may be given in
+		// either order (they are swapped if min > max); equal bounds return that
+		// value.
+		"randomFloat": func(minVal, maxVal float64) float64 {
+			if minVal > maxVal {
+				minVal, maxVal = maxVal, minVal
+			}
+			return minVal + mathrand.Float64()*(maxVal-minVal)
+		},
+		// randomChoice returns one of its arguments at random. It errors when given
+		// no arguments so an empty {{randomChoice}} surfaces as a 500 rather than
+		// silently rendering "".
+		"randomChoice": func(choices ...string) (string, error) {
+			if len(choices) == 0 {
+				return "", errors.New("randomChoice: at least one argument is required")
+			}
+			return choices[mathrand.IntN(len(choices))], nil
 		},
 		"randomString": func(n int) string {
 			if n <= 0 {
@@ -1109,7 +1206,88 @@ func routeFuncMap() template.FuncMap {
 			}
 			return string(b)
 		},
+		// lorem returns n space-separated lorem-ipsum words drawn at random from a
+		// small static pool. n<=0 yields an empty string.
+		"lorem": func(n int) string {
+			if n <= 0 {
+				return ""
+			}
+			words := make([]string, n)
+			for i := range words {
+				words[i] = loremWords[mathrand.IntN(len(loremWords))]
+			}
+			return strings.Join(words, " ")
+		},
+		// seq returns this route's next sequence value, starting at 1 and
+		// incrementing by 1 per call. It is concurrency-safe (atomic) and private to
+		// the route, and resets to 1 on hot-reload (a reload allocates a fresh
+		// counter).
+		"seq": func() uint64 { return seq.Add(1) },
+		// hash returns the lowercase hex digest of text under the named algorithm:
+		// "sha256", "sha1", or "md5". An unknown algorithm is an error (a 500 at
+		// request time). md5/sha1 are provided only for non-security fixture data.
+		"hash": hashHex,
+		// faker returns a fresh map of plausible placeholder fields so a template
+		// can index it as {{faker.name}}, {{faker.email}}, {{faker.phone}}, or
+		// {{faker.address}}. Go's text/template evaluates {{faker.name}} as
+		// "call faker, then index the result by 'name'", so this niladic
+		// map-returning form (rather than dotted FuncMap keys, which are illegal)
+		// is what makes the documented {{faker.name}} syntax work. Each call draws
+		// fresh values, so two {{faker.name}} references render independently.
+		"faker":  fakerData,
 		"env":    os.Getenv,
 		"base64": func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) },
+	}
+}
+
+// hashHex computes the lowercase hex digest of text under the named algorithm.
+// Supported algorithms are "sha256", "sha1", and "md5"; any other name is an
+// error. md5 and sha1 are offered only for generating non-security mock
+// fixtures (e.g. faking an ETag or legacy checksum) and must never be relied on
+// for authentication or integrity.
+func hashHex(algo, text string) (string, error) {
+	switch strings.ToLower(algo) {
+	case "sha256":
+		sum := sha256.Sum256([]byte(text))
+		return hex.EncodeToString(sum[:]), nil
+	case "sha1":
+		sum := sha1.Sum([]byte(text)) //nolint:gosec // non-security fixture digest only.
+		return hex.EncodeToString(sum[:]), nil
+	case "md5":
+		sum := md5.Sum([]byte(text)) //nolint:gosec // non-security fixture digest only.
+		return hex.EncodeToString(sum[:]), nil
+	default:
+		return "", fmt.Errorf("hash: unknown algorithm %q (want %q, %q, or %q)", algo, "sha256", "sha1", "md5")
+	}
+}
+
+// fakerData builds one record of plausible placeholder identity fields, drawing
+// each component at random from the static faker pools. It returns a fresh map
+// per call so {{faker.name}} and a later {{faker.email}} render independently.
+// Returning a map (a niladic function) is what lets the documented dotted
+// {{faker.name}} syntax evaluate under Go's text/template (which treats the form
+// as "call faker, then index by name").
+func fakerData() map[string]string {
+	first := fakerFirstNames[mathrand.IntN(len(fakerFirstNames))]
+	last := fakerLastNames[mathrand.IntN(len(fakerLastNames))]
+	name := first + " " + last
+	email := fmt.Sprintf("%s.%s@%s",
+		strings.ToLower(first), strings.ToLower(last),
+		fakerEmailDomains[mathrand.IntN(len(fakerEmailDomains))])
+	// US-style 10-digit number: (NXX) NXX-XXXX with N in 2-9.
+	phone := fmt.Sprintf("(%d%d%d) %d%d%d-%04d",
+		2+mathrand.IntN(8), mathrand.IntN(10), mathrand.IntN(10),
+		2+mathrand.IntN(8), mathrand.IntN(10), mathrand.IntN(10),
+		mathrand.IntN(10000))
+	address := fmt.Sprintf("%d %s %s, %s",
+		1+mathrand.IntN(9999),
+		fakerStreets[mathrand.IntN(len(fakerStreets))],
+		fakerStreetSuffixes[mathrand.IntN(len(fakerStreetSuffixes))],
+		fakerCities[mathrand.IntN(len(fakerCities))])
+	return map[string]string{
+		"name":    name,
+		"email":   email,
+		"phone":   phone,
+		"address": address,
 	}
 }

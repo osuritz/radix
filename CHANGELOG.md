@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **More mock-route template functions** — the `radix mock` response templating
+  gained `randomFloat min max` (float in `[min, max)`, bounds swapped if
+  reversed), `randomChoice "a" "b" …` (a random argument), `lorem n` (n
+  lorem-ipsum words), `seq` (a per-route counter starting at 1 that increments
+  per call and resets on hot-reload), `hash "sha256"|"sha1"|"md5" "text"` (hex
+  digest; md5/sha1 are for non-security fixtures only), and `faker.name` /
+  `faker.email` / `faker.phone` / `faker.address` (placeholder identity data from
+  small hand-rolled static lists). The existing `now` helper now also accepts an
+  optional Go layout argument (`{{now "2006-01-02"}}`) while `{{now}}` keeps its
+  RFC3339 behavior. All generators are stdlib-only (no faker/lorem dependency),
+  and `{{seq}}` is concurrency-safe and private to each route. See the README
+  template-function table and `examples/mock-routes.yml`.
+
 ## [0.4.0] - 2026-06-14
 
 ### Changed
