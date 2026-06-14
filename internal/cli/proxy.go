@@ -56,8 +56,8 @@ func init() {
 	proxyCmd.Flags().StringVar(&proxyRewrite, "rewrite", "", "path rewrite rule (from:to format)")
 	proxyCmd.Flags().StringVar(&proxyStripPrefix, "strip-prefix", "", "strip path prefix before forwarding")
 	proxyCmd.Flags().StringVar(&proxyTimeout, "timeout", "", "backend response timeout (e.g., 30s, 1m)")
-	proxyCmd.Flags().DurationVar(&proxyFlushInterval, "flush-interval", -1,
-		"response flush interval for streaming (-1 = flush immediately, 0 = default buffering, >0 = periodic)")
+	proxyCmd.Flags().DurationVar(&proxyFlushInterval, "flush-interval", -1*time.Nanosecond,
+		"response flush interval for streaming; negative (e.g. -1ns) flushes immediately, 0 uses default (default -1ns)")
 	proxyCmd.Flags().BoolVar(&proxyWebSocket, "websocket", false, "enable explicit WebSocket support")
 	proxyCmd.Flags().BoolVar(&proxyTLSSkipVerify, "tls-skip-verify", false, "skip TLS certificate verification for backend")
 	proxyCmd.Flags().StringArrayVar(&proxyHeaders, "header", nil, "add header to proxy requests (Key: Value)")

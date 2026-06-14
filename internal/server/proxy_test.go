@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"testing"
@@ -238,6 +239,11 @@ func TestNewReverseProxy_HostHeader(t *testing.T) {
 	}
 }
 
+// TestNewReverseProxy_StreamingIncrementalFlush proves SSE pass-through
+// streaming: SSE (text/event-stream) chunks reach the client incrementally as
+// the backend produces them, rather than being buffered until the handler
+// returns. This exercises end-to-end streaming behavior, not the FlushInterval
+// knob itself (which is covered by TestNewReverseProxy_FlushIntervalWired).
 func TestNewReverseProxy_StreamingIncrementalFlush(t *testing.T) {
 	const chunkCount = 3
 	// chunkSent is signaled by the backend after it writes & flushes each chunk.
@@ -351,7 +357,7 @@ func TestNewReverseProxy_ForwardedHeaders(t *testing.T) {
 	}
 }
 
-func TestNewReverseProxy_ForwardedForAppended(t *testing.T) {
+func TestNewReverseProxy_ForwardedForNotSpoofable(t *testing.T) {
 	var receivedHeaders http.Header
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header.Clone()
@@ -366,15 +372,58 @@ func TestNewReverseProxy_ForwardedForAppended(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Host = "client.example.com"
 	req.RemoteAddr = "203.0.113.7:54321"
-	// Simulate an upstream proxy that already set X-Forwarded-For.
+	// Simulate a malicious client attempting to spoof forwarding headers.
 	req.Header.Set("X-Forwarded-For", "198.51.100.1")
+	req.Header.Set("X-Forwarded-Host", "evil.example")
+	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
 
-	want := "198.51.100.1, 203.0.113.7"
-	if got := receivedHeaders.Get("X-Forwarded-For"); got != want {
-		t.Errorf("expected appended X-Forwarded-For %q, got %q", want, got)
+	// The Rewrite path strips client-supplied forwarding headers and sets
+	// fresh values, so the spoofed client IP must not appear in XFF.
+	if got := receivedHeaders.Get("X-Forwarded-For"); strings.Contains(got, "198.51.100.1") {
+		t.Errorf("X-Forwarded-For must not contain spoofed client value, got %q", got)
+	}
+	if got := receivedHeaders.Get("X-Forwarded-For"); got != "203.0.113.7" {
+		t.Errorf("expected X-Forwarded-For to be the real client IP %q, got %q", "203.0.113.7", got)
+	}
+	// XFH must reflect the real inbound Host, not the spoofed value.
+	if got := receivedHeaders.Get("X-Forwarded-Host"); got != "client.example.com" {
+		t.Errorf("expected X-Forwarded-Host %q, got %q", "client.example.com", got)
+	}
+	// XFP must reflect the real (plain HTTP) inbound scheme, not the spoofed "https".
+	if got := receivedHeaders.Get("X-Forwarded-Proto"); got != "http" {
+		t.Errorf("expected X-Forwarded-Proto %q, got %q", "http", got)
+	}
+}
+
+func TestNewReverseProxy_FlushIntervalWired(t *testing.T) {
+	targetURL, _ := url.Parse("http://backend.example")
+
+	tests := []struct {
+		name     string
+		interval time.Duration
+	}{
+		{"periodic", 250 * time.Millisecond},
+		{"immediate", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewReverseProxy(ProxyConfig{
+				Target:        targetURL,
+				FlushInterval: tt.interval,
+			})
+			rp, ok := h.(*httputil.ReverseProxy)
+			if !ok {
+				t.Fatalf("expected *httputil.ReverseProxy, got %T", h)
+			}
+			if rp.FlushInterval != tt.interval {
+				t.Errorf("FlushInterval = %v, want %v", rp.FlushInterval, tt.interval)
+			}
+		})
 	}
 }
 

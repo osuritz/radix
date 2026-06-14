@@ -44,6 +44,8 @@ proxy:
   backend_ca: ./certs/backend-ca.pem
   backend_cert: ./certs/client-cert.pem
   backend_key: ./certs/client-key.pem
+  # Response flushing for streaming backends
+  flush_interval: -1ns  # -1ns = flush immediately (best for SSE/streaming); 100ms = periodic; 0 = default buffering
   # Path manipulation
   rewrite: ""
   strip_prefix: ""

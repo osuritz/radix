@@ -25,7 +25,8 @@ type ProxyConfig struct {
 	// periodically at that interval. Note that Server-Sent Events
 	// (text/event-stream) and chunked / unknown-length responses are always
 	// flushed immediately by Go's httputil.ReverseProxy regardless of this
-	// setting.
+	// setting. A negative value additionally flushes large non-streaming
+	// (known Content-Length) bodies after every copied write chunk.
 	FlushInterval time.Duration
 }
 
@@ -33,52 +34,48 @@ type ProxyConfig struct {
 //
 // It supports path prefix stripping, path rewriting, custom backend TLS
 // configuration, and returns 502 Bad Gateway on proxy errors.
+//
+// It sets the standard X-Forwarded-For / X-Forwarded-Host / X-Forwarded-Proto
+// headers from the inbound request and strips any client-supplied forwarding
+// headers first, so spoofed values are never passed through to the backend
+// (this proxy does not trust client-provided X-Forwarded-* values).
 func NewReverseProxy(cfg ProxyConfig) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(cfg.Target)
+	proxy := &httputil.ReverseProxy{
+		// Rewrite is the stdlib-recommended replacement for Director. The
+		// ReverseProxy deletes any inbound X-Forwarded-* headers before Rewrite
+		// runs, so SetXForwarded() below always emits fresh, trustworthy values
+		// derived from the actual inbound connection (not client-spoofable).
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			// SetURL routes to the single-host target: it sets the outbound
+			// scheme/host and joins the target path with the request path
+			// (the Rewrite-equivalent of NewSingleHostReverseProxy).
+			pr.SetURL(cfg.Target)
 
-	// Custom director for path rewriting
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		// Capture the original client-facing values before the default
-		// director mutates the request to point at the backend. The Director
-		// runs after the request has been received, so the inbound req.Host
-		// and req.TLS are still the client's values here.
-		originalHost := req.Host
-		proto := "http"
-		if req.TLS != nil {
-			proto = "https"
-		}
-
-		originalDirector(req)
-
-		// Strip prefix
-		if cfg.StripPrefix != "" {
-			req.URL.Path = strings.TrimPrefix(req.URL.Path, cfg.StripPrefix)
-			if req.URL.Path == "" {
-				req.URL.Path = "/"
+			// Strip prefix
+			if cfg.StripPrefix != "" {
+				pr.Out.URL.Path = strings.TrimPrefix(pr.Out.URL.Path, cfg.StripPrefix)
+				if pr.Out.URL.Path == "" {
+					pr.Out.URL.Path = "/"
+				}
+				pr.Out.URL.RawPath = strings.TrimPrefix(pr.Out.URL.RawPath, cfg.StripPrefix)
 			}
-			req.URL.RawPath = strings.TrimPrefix(req.URL.RawPath, cfg.StripPrefix)
-		}
 
-		// Path rewrite ("from:to" format)
-		if cfg.Rewrite != "" {
-			from, to, ok := strings.Cut(cfg.Rewrite, ":")
-			if ok {
-				req.URL.Path = strings.Replace(req.URL.Path, from, to, 1)
+			// Path rewrite ("from:to" format)
+			if cfg.Rewrite != "" {
+				from, to, ok := strings.Cut(cfg.Rewrite, ":")
+				if ok {
+					pr.Out.URL.Path = strings.Replace(pr.Out.URL.Path, from, to, 1)
+				}
 			}
-		}
 
-		// X-Forwarded-Host / X-Forwarded-Proto describe the original client
-		// request. X-Forwarded-For is intentionally left to Go's
-		// httputil.ReverseProxy, which appends the client IP (derived from
-		// req.RemoteAddr) to any existing value after this Director runs.
-		if originalHost != "" {
-			req.Header.Set("X-Forwarded-Host", originalHost)
-		}
-		req.Header.Set("X-Forwarded-Proto", proto)
+			// Set X-Forwarded-For/-Host/-Proto from the inbound request. The
+			// ReverseProxy already removed any client-provided forwarding
+			// headers, so this strips spoofed values and sets fresh ones.
+			pr.SetXForwarded()
 
-		// Preserve Host header for the backend
-		req.Host = cfg.Target.Host
+			// Preserve sending the backend's Host for single-host routing.
+			pr.Out.Host = cfg.Target.Host
+		},
 	}
 
 	// Flush interval for streaming responses. -1 flushes immediately after
