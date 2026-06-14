@@ -7,9 +7,23 @@
 # Custom routes take precedence over the built-in httpbin-style endpoints.
 # Templates use idiomatic Go text/template syntax: dot access for request data
 # ({{.params.id}}, {{.query.q}}, {{.body.field}}, {{.method}}, {{.path}}) and
-# function calls for generators ({{uuid}}, {{now}}, {{random 1 100}}, etc.).
-# Headers whose names contain "-" need the index function, e.g.
-# {{index .headers "Content-Type"}}.
+# function calls for generators. Headers whose names contain "-" need the index
+# function, e.g. {{index .headers "Content-Type"}}.
+#
+# Generator functions:
+#   {{uuid}}                          random v4 UUID
+#   {{now}} / {{now "2006-01-02"}}    current UTC time (RFC3339, or a Go layout)
+#   {{timestamp}}                     current Unix time (seconds)
+#   {{random low high}}               random int in [low, high)
+#   {{randomFloat min max}}           random float64 in [min, max)
+#   {{randomChoice "a" "b" ...}}      one of the arguments at random
+#   {{randomString n}}                n random alphanumeric characters
+#   {{lorem n}}                       n random lorem-ipsum words
+#   {{seq}}                           per-route counter from 1 (resets on reload)
+#   {{hash "sha256" "text"}}          hex digest (sha256 | sha1 | md5)
+#   {{faker.name}} / .email / .phone / .address   placeholder identity data
+#   {{env "VAR"}}                     environment variable value
+#   {{base64 "s"}}                    base64-encoded string
 
 settings:
   # Global latency/chaos (CLI flags override these). Durations accept Go
@@ -62,6 +76,32 @@ routes:
           "id": "{{uuid}}",
           "name": "{{.body.name}}",
           "email": "{{.body.email}}",
+          "created_at": "{{now}}"
+        }
+
+  # Generator showcase: fake user records with the full template-function set.
+  # {{seq}} is a per-route counter (starts at 1, resets on --watch reload);
+  # {{faker.*}} draws placeholder identity data; {{randomChoice}} / {{randomFloat}}
+  # / {{lorem}} / {{hash}} round out the generators; {{now "..."}} takes a layout.
+  - path: /api/fake/user
+    method: GET
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body: |
+        {
+          "seq": {{seq}},
+          "id": "{{uuid}}",
+          "name": "{{faker.name}}",
+          "email": "{{faker.email}}",
+          "phone": "{{faker.phone}}",
+          "address": "{{faker.address}}",
+          "role": "{{randomChoice "admin" "editor" "viewer"}}",
+          "score": {{randomFloat 0 100}},
+          "bio": "{{lorem 8}}",
+          "etag": "{{hash "sha256" "user"}}",
+          "created_on": "{{now "2006-01-02"}}",
           "created_at": "{{now}}"
         }
 

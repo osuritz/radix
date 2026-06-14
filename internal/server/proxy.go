@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/osuritz/radix/internal/server/middleware"
 )
 
 // ProxyConfig holds configuration for the reverse proxy handler.
@@ -46,6 +48,15 @@ func NewReverseProxy(cfg ProxyConfig) http.Handler {
 		// runs, so SetXForwarded() below always emits fresh, trustworthy values
 		// derived from the actual inbound connection (not client-spoofable).
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			// Annotate the access log with the upstream identity (the target
+			// host, e.g. "localhost:3000" or "users:8080"), if the logging
+			// middleware seeded an annotation on this request. Nil-safe: the
+			// annotation is absent when logging is not installed.
+			if a := middleware.LogAnnotationFromContext(pr.In.Context()); a != nil {
+				a.Kind = "proxy"
+				a.Target = cfg.Target.Host
+			}
+
 			// SetURL routes to the single-host target: it sets the outbound
 			// scheme/host and joins the target path with the request path
 			// (the Rewrite-equivalent of NewSingleHostReverseProxy).

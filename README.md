@@ -330,9 +330,29 @@ parsed JSON object, or a form-urlencoded first value). JSON numbers keep their
 exact source text (so `{"id":1000000}` renders `1000000`, not `1e+06`), and a
 form field renders its single value (`admin`, not `[admin]`) — the same value
 condition matching reads. Header names containing `-` need `index`, e.g.
-`{{index .headers "Content-Type"}}`. Generator functions: `{{uuid}}`, `{{now}}`,
-`{{timestamp}}`, `{{random low high}}`, `{{randomString n}}`, `{{env "VAR"}}`,
-`{{base64 "s"}}`.
+`{{index .headers "Content-Type"}}`. Generator functions:
+
+| Function | Result |
+| --- | --- |
+| `{{uuid}}` | a random v4 UUID |
+| `{{now}}` | current UTC time, RFC3339 |
+| `{{now "2006-01-02"}}` | current UTC time in the given Go reference layout |
+| `{{timestamp}}` | current Unix time (seconds) |
+| `{{random low high}}` | random int in `[low, high)` |
+| `{{randomFloat min max}}` | random float64 in `[min, max)` (bounds are swapped if `min > max`) |
+| `{{randomChoice "a" "b" …}}` | one of the given arguments at random (errors with no args) |
+| `{{randomString n}}` | `n` random alphanumeric characters |
+| `{{lorem n}}` | `n` random lorem-ipsum words |
+| `{{seq}}` | a per-route counter starting at 1, incrementing per call (resets on hot-reload) |
+| `{{hash "sha256" "text"}}` | hex digest; algorithm is `sha256`, `sha1`, or `md5` (md5/sha1 are for non-security fixtures) |
+| `{{faker.name}}` `{{faker.email}}` `{{faker.phone}}` `{{faker.address}}` | random placeholder identity data |
+| `{{env "VAR"}}` | value of environment variable `VAR` |
+| `{{base64 "s"}}` | base64-encoded `s` |
+
+`{{seq}}` is private to each route and concurrency-safe; because a `--watch`
+reload rebuilds the route, the counter restarts at 1 after a reload. The
+`{{faker.*}}` helpers use the idiomatic dotted form (Go's `text/template`
+evaluates `{{faker.name}}` as "call `faker`, then index `name`").
 
 **Template validation timing.** An **inline** `body` template is parsed at load
 time, so a malformed inline template fails fast (the routes file is rejected). A
@@ -415,15 +435,34 @@ formats are available:
   reading at a glance during local development. Columns, in order: a dimmed
   short timestamp (`HH:MM:SS`), the HTTP method (color-coded, padded so paths
   align), the request path (padded, with overly long paths truncated by a
-  single `…` so the columns stay aligned), the status code (color-coded), the
-  latency, and — only when the response had a body — a human-readable size. A
-  zero-size response omits the size column entirely.
+  single `…` so the columns stay aligned), an optional dimmed `→ target` column
+  (see below), the status code (color-coded), the latency, and — only when the
+  response had a body — a human-readable size. A zero-size response omits the
+  size column entirely.
 
   ```
   14:23:01 GET     /index.html                  200 12ms 2.3KB
   14:23:01 POST    /api/users                   201 8ms 142B
   14:23:01 DELETE  /users/123                    204 5ms
   ```
+
+  The `→ target` column tells the request story left-to-right
+  (`METHOD /path → target STATUS latency [size]`) and appears only when it is
+  meaningful:
+
+  - **`radix proxy`** shows the upstream the request was forwarded to (the
+    target host, e.g. `localhost:3000`).
+  - **`radix serve --spa`** shows `fallback` only when a request is served the
+    SPA index because the path did not exist; real files and plain static
+    assets get no target column.
+
+  ```
+  14:23:01 GET     /api/users                   → localhost:3000 200 12ms 2.3KB
+  14:23:01 GET     /dashboard                   → fallback 200 3ms 1.0KB
+  ```
+
+  When no target applies the line is unchanged from the layout above (no arrow,
+  no extra spacing).
 
 - **`clf`** — Common Log Format.
 - **`extended_clf`** — Common Log Format plus referrer and user-agent. This is
