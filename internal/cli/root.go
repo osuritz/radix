@@ -139,6 +139,7 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(proxyCmd)
 	rootCmd.AddCommand(echoCmd)
+	rootCmd.AddCommand(mockCmd)
 }
 
 // GetConfig returns the loaded configuration

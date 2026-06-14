@@ -108,10 +108,26 @@ type AuthConfig struct {
 
 // MockConfig represents configuration for the mock command
 type MockConfig struct {
-	Routes   string  `mapstructure:"routes"`
-	Watch    bool    `mapstructure:"watch"`
-	Latency  string  `mapstructure:"latency"`
-	FailRate float64 `mapstructure:"fail_rate"`
+	// Routes and Watch configure custom YAML routes and hot-reload. They are
+	// reserved for a later layer and currently unused by the mock command.
+	Routes string `mapstructure:"routes"`
+	Watch  bool   `mapstructure:"watch"`
+
+	// Latency and LatencyJitter add artificial latency to every built-in
+	// response (Go duration strings, e.g. "200ms").
+	Latency       string `mapstructure:"latency"`
+	LatencyJitter string `mapstructure:"latency_jitter"`
+
+	// FailRate is the random failure rate as a percentage in [0, 100], and
+	// FailStatus is the status code returned for those failures.
+	FailRate   float64 `mapstructure:"fail_rate"`
+	FailStatus int     `mapstructure:"fail_status"`
+
+	// CORS enables permissive CORS headers. Builtin toggles the built-in
+	// httpbin-style endpoints, and Prefix mounts them under a path prefix.
+	CORS    bool   `mapstructure:"cors"`
+	Builtin bool   `mapstructure:"builtin"`
+	Prefix  string `mapstructure:"prefix"`
 }
 
 // Load loads configuration from file, environment variables, and defaults
@@ -210,7 +226,12 @@ func setDefaults(v *viper.Viper) {
 
 	// Mock defaults
 	v.SetDefault("mock.watch", false)
+	v.SetDefault("mock.latency", "0")
+	v.SetDefault("mock.latency_jitter", "0")
 	v.SetDefault("mock.fail_rate", 0.0)
+	v.SetDefault("mock.fail_status", 500)
+	v.SetDefault("mock.cors", false)
+	v.SetDefault("mock.builtin", true)
 }
 
 // ValidateFile validates a configuration file exists and is readable
