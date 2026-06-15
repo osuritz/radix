@@ -52,8 +52,8 @@ resolve_version() {
       | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
     [ -n "$tag" ] || die "failed to fetch latest release tag from GitHub"
   fi
-  echo "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+' \
-    || die "invalid release tag format: ${tag} (expected vX.Y.Z)"
+  echo "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?$' \
+    || die "invalid release tag format: ${tag} (expected vX.Y.Z or vX.Y.Z-prerelease)"
   echo "$tag"
 }
 
