@@ -6,6 +6,8 @@ metrics are enabled (the default), just open the admin port in a browser and
 watch requests, latency, status codes, and bandwidth update in real time. No
 extra tooling, no flags, no internet.
 
+![The Radix metrics dashboard: a KPI row, a request-rate chart, a status-code bar chart, latency percentiles, bandwidth, and per-command counters](/images/dashboard-light.png)
+
 ```bash
 radix serve                          # app on :8080, admin on 127.0.0.1:9090
 # then open http://127.0.0.1:9090 in your browser
@@ -47,6 +49,8 @@ keeps retrying — it reconnects on its own once metrics are back.
 The dashboard themes with **Catppuccin** — Latte (light) and Frappé (dark). A
 toggle in the header switches between them; your choice is saved to
 `localStorage`. With no saved choice, it follows your OS `prefers-color-scheme`.
+
+![The dashboard in its dark Catppuccin Frappé theme](/images/dashboard-dark.png)
 
 ## Requires JSON metrics
 
