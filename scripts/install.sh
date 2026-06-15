@@ -114,8 +114,7 @@ extract_and_install() {
   mkdir -p "$install_dir" 2>/dev/null \
     || die "cannot create install directory: ${install_dir}"
   [ -w "$install_dir" ] \
-    || die "install directory is not writable: ${install_dir}
-  Hint: run with sudo, or set RADIX_INSTALL_DIR to a writable path"
+    || die "install directory is not writable: ${install_dir} (hint: set RADIX_INSTALL_DIR to a writable path)"
 
   info "Extracting ${BINARY} ..."
   tar -xzf "$archive_path" -C "$tmpdir" "${BINARY}" \
@@ -125,7 +124,8 @@ extract_and_install() {
   [ -f "$extracted" ] || die "${BINARY} not found in archive"
   [ -x "$extracted" ] || die "extracted ${BINARY} is not executable"
 
-  mv "$extracted" "${install_dir}/${BINARY}"
+  mv "$extracted" "${install_dir}/${BINARY}" \
+    || die "failed to install ${BINARY} to ${install_dir}"
   success "installed ${install_dir}/${BINARY}"
 }
 setup_path()         { die "not implemented"; }
