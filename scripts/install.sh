@@ -128,7 +128,49 @@ extract_and_install() {
     || die "failed to install ${BINARY} to ${install_dir}"
   success "installed ${install_dir}/${BINARY}"
 }
-setup_path()         { die "not implemented"; }
+# Appends ~/.radix/bin to the user's shell startup file if not already on PATH.
+# Skipped entirely when RADIX_INSTALL_DIR is set (user manages their own PATH).
+# Uses single-quoted heredoc so $HOME expands at shell startup, not install time.
+setup_path() {
+  local install_dir="$1"
+
+  # When the user set a custom install dir, skip shell file modification entirely
+  if [ "${RADIX_INSTALL_DIR+set}" = "set" ]; then
+    info "Make sure ${install_dir} is on your PATH."
+    return
+  fi
+
+  # Resolve canonical path to catch $HOME vs /Users/... equivalence
+  local canonical
+  canonical="$(cd "$install_dir" 2>/dev/null && pwd || echo "$install_dir")"
+
+  case ":${PATH}:" in
+    *":${install_dir}:"*|*":${canonical}:"*)
+      success "${install_dir} is already on PATH"
+      return ;;
+  esac
+
+  # Pick shell startup file
+  local shell_file
+  case "${SHELL:-}" in
+    */zsh) shell_file="${HOME}/.zshrc" ;;
+    *)
+      if [ -f "${HOME}/.bashrc" ]; then
+        shell_file="${HOME}/.bashrc"
+      else
+        shell_file="${HOME}/.profile"
+      fi ;;
+  esac
+
+  # Single-quoted heredoc: $HOME expands at shell startup, not at install time
+  cat >> "$shell_file" << 'RADIX_PATH'
+
+export PATH='$HOME/.radix/bin':$PATH  # added by radix installer
+RADIX_PATH
+
+  info "Added ~/.radix/bin to PATH in ${shell_file}"
+  info "Restart your shell or run: source ${shell_file}"
+}
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
