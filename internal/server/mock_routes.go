@@ -91,13 +91,15 @@ const (
 // RoutesFile is the on-disk YAML schema for a mock routes configuration. The
 // modeled feature set is: settings, exact/param/regex/glob routes, inline or
 // file-backed templated response bodies, per-route delay, conditional responses
-// (the `conditions:` block), and scripted Server-Sent Events (the `sse:` block,
-// which streams a text/event-stream response).
+// (the `conditions:` block), scripted Server-Sent Events (the `sse:` block,
+// which streams a text/event-stream response), stateful sequenced responses (the
+// `sequence:` block, optionally with `repeat:`), and weighted-random responses
+// (the `random:` block).
 //
-// The remaining advanced keys from the design doc (sequence, random, websocket)
-// are intentionally NOT modeled and are ignored gracefully when present: they
-// unmarshal into nothing and have no effect. See the package docs / the mock
-// command help for the supported subset.
+// The remaining advanced key from the design doc (websocket) is intentionally
+// NOT modeled and is ignored gracefully when present: it unmarshals into nothing
+// and has no effect. See the package docs / the mock command help for the
+// supported subset.
 type RoutesFile struct {
 	Settings settingsYAML   `yaml:"settings"`
 	Routes   []RouteDefYAML `yaml:"routes"`
@@ -157,15 +159,40 @@ type FallbackConfig struct {
 // a single buffered response the route streams the scripted events as a
 // text/event-stream. An SSE route ignores Response/Conditions (the streamed
 // events are the response).
+//
+// Sequence and Random are the two additional top-level response selectors:
+//   - Sequence is a stateful cycle of responses: successive requests advance
+//     through the list. With Repeat true the cycle loops back to the first item
+//     after the last; with Repeat false (the default) it advances to the last
+//     item and then "sticks" on it for every subsequent request.
+//   - Random selects one of a set of weighted arms per request.
+//
+// SSE, Sequence, and Random are mutually exclusive with each other (at most one
+// per route). Sequence and Random additionally may not be combined with
+// Response or Conditions (the selector IS the route's response strategy);
+// Repeat is only meaningful with Sequence. These rules are enforced at load time
+// by compileRoute.
 type RouteDefYAML struct {
-	Path        string          `yaml:"path"`
-	Method      string          `yaml:"method"`
-	Methods     []string        `yaml:"methods"`
-	Delay       yamlDuration    `yaml:"delay"`
-	DelayJitter yamlDuration    `yaml:"delay_jitter"`
-	Response    *ResponseYAML   `yaml:"response"`
-	Conditions  []ConditionYAML `yaml:"conditions"`
-	SSE         []SSEEventYAML  `yaml:"sse"`
+	Path        string                 `yaml:"path"`
+	Method      string                 `yaml:"method"`
+	Methods     []string               `yaml:"methods"`
+	Delay       yamlDuration           `yaml:"delay"`
+	DelayJitter yamlDuration           `yaml:"delay_jitter"`
+	Response    *ResponseYAML          `yaml:"response"`
+	Conditions  []ConditionYAML        `yaml:"conditions"`
+	SSE         []SSEEventYAML         `yaml:"sse"`
+	Sequence    []ResponseYAML         `yaml:"sequence"` // stateful cycle of responses
+	Repeat      bool                   `yaml:"repeat"`   // when true, sequence loops back to the first after the last
+	Random      []WeightedResponseYAML `yaml:"random"`   // weighted-random selection
+}
+
+// WeightedResponseYAML is one arm of a route's random: block — a positive
+// integer weight and the response to serve when the arm is chosen. An arm is
+// picked with probability weight/sum(weights); a non-positive weight is a
+// load-time error.
+type WeightedResponseYAML struct {
+	Weight   int          `yaml:"weight"`
+	Response ResponseYAML `yaml:"response"`
 }
 
 // SSEEventYAML is one scripted Server-Sent Event in a route's `sse:` block.
@@ -336,15 +363,47 @@ type compiledRoute struct {
 	isSSE     bool
 	sseEvents []compiledSSEEvent
 
+	// isSequence marks the route as a stateful sequence: each request advances
+	// seqSel and selectResponse returns sequence[index]. seqRepeat selects the
+	// looping vs. stick-on-last semantics. The slice is non-empty when set
+	// (validated at load time).
+	isSequence bool
+	seqRepeat  bool
+	sequence   []compiledResponse
+
+	// isRandom marks the route as a weighted-random selector: each request picks
+	// one of randomArms (cumulative-weight bins summing to randomTotal).
+	isRandom    bool
+	randomArms  []weightedResponse
+	randomTotal int
+
 	// seq is this route's private monotonic counter, backing the {{seq}} template
 	// helper. It is allocated fresh per compileRoute call and shared by every
-	// template this route owns (top-level body, file body, and each condition
-	// arm), so all of a route's templates draw from one sequence. Because a
-	// hot-reload builds entirely new compiledRoute values, the counter resets to
-	// 0 on every reload. It is a pointer so the closures captured in the route's
-	// FuncMaps mutate this route's counter (not a copy). Future sequence/conditions
-	// work (#39) can reuse this same per-route counter.
+	// template this route owns (top-level body, file body, each condition arm, and
+	// every sequence item / random arm body), so all of a route's templates draw
+	// from one sequence. Because a hot-reload builds entirely new compiledRoute
+	// values, the counter resets to 0 on every reload. It is a pointer so the
+	// closures captured in the route's FuncMaps mutate this route's counter (not a
+	// copy).
 	seq *atomic.Uint64
+
+	// seqSel is this route's private sequence-selection counter, used ONLY to pick
+	// the current sequence item (incremented exactly once per request during
+	// selection). It is deliberately separate from seq: a body that renders
+	// {{seq}} multiple times must not skew which sequence item is chosen, so the
+	// selection index and the {{seq}} template counter advance independently. Like
+	// seq it is a fresh pointer per compileRoute, so it resets to 0 on hot-reload.
+	seqSel *atomic.Uint64
+}
+
+// weightedResponse is one compiled arm of a random: block. cum is the cumulative
+// upper bound of this arm's weight bin (the running sum of weights up to and
+// including this arm), enabling an O(n) pick: for a draw r in [0, total), the
+// chosen arm is the first whose cum > r. resp is the response served when the
+// arm is chosen.
+type weightedResponse struct {
+	cum  int
+	resp compiledResponse
 }
 
 // CompiledRoutes is the immutable, request-time representation of a routes file.
@@ -386,7 +445,7 @@ func LoadRoutes(path string) (*CompiledRoutes, error) {
 func CompileRoutes(data []byte, baseDir string) (*CompiledRoutes, error) {
 	var rf RoutesFile
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(false) // ignore unsupported keys (conditions, sequence, etc.)
+	dec.KnownFields(false) // ignore unsupported keys (e.g. the unmodeled websocket block)
 	if err := dec.Decode(&rf); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("mock routes: parse YAML: %w", err)
 	}
@@ -502,6 +561,7 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		delay:       rd.Delay.Duration(),
 		delayJitter: rd.DelayJitter.Duration(),
 		seq:         new(atomic.Uint64),
+		seqSel:      new(atomic.Uint64),
 	}
 	if cr.delay < 0 || cr.delayJitter < 0 {
 		return compiledRoute{}, errors.New("delay and delay_jitter must not be negative")
@@ -529,6 +589,13 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		cr.kind = routeExact
 	}
 
+	// Validate selector exclusivity up front (fail-fast, before compiling any
+	// arm): a route may use at most one top-level response selector kind, and the
+	// new selectors (sequence/random) may not be combined with response/conditions.
+	if err := validateSelectors(rd); err != nil {
+		return compiledRoute{}, err
+	}
+
 	// An `sse:` block makes the route a streaming Server-Sent Events endpoint.
 	// The streamed events are the response, so an SSE route ignores
 	// response/conditions and returns early once its events are compiled.
@@ -539,6 +606,38 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		}
 		cr.isSSE = true
 		cr.sseEvents = events
+		return cr, nil
+	}
+
+	// A `sequence:` block makes the route a stateful cycle of responses: each
+	// request advances seqSel and serves the next item. Like SSE it is a
+	// top-level response strategy, so it ignores response/conditions (already
+	// rejected by validateSelectors) and returns early once compiled. Presence is
+	// keyed on the key being present (non-nil) so an explicit empty `sequence: []`
+	// reaches compileSequence's "at least one response" error.
+	if rd.Sequence != nil {
+		seq, sErr := compileSequence(rd.Sequence, cr.seq)
+		if sErr != nil {
+			return compiledRoute{}, sErr
+		}
+		cr.isSequence = true
+		cr.seqRepeat = rd.Repeat
+		cr.sequence = seq
+		return cr, nil
+	}
+
+	// A `random:` block makes the route a weighted-random selector: each request
+	// picks one arm. Like the other selectors it returns early once compiled.
+	// Present-but-empty (`random: []`) reaches compileRandom's "at least one arm"
+	// error rather than degrading to a plain route.
+	if rd.Random != nil {
+		arms, total, rErr := compileRandom(rd.Random, cr.seq)
+		if rErr != nil {
+			return compiledRoute{}, rErr
+		}
+		cr.isRandom = true
+		cr.randomArms = arms
+		cr.randomTotal = total
 		return cr, nil
 	}
 
@@ -599,6 +698,108 @@ func compileResponse(resp ResponseYAML, seq *atomic.Uint64) (compiledResponse, e
 		out.bodyTmpl = tmpl
 	}
 	return out, nil
+}
+
+// validateSelectors enforces the route's top-level response-selector rules at
+// load time (fail-fast, with clear messages the caller wraps with the route
+// number/path):
+//
+//   - At most one of the mutually-exclusive selector kinds may be present:
+//     `sse`, `sequence`, or `random`.
+//   - `sequence` and `random` may not be combined with `response` or
+//     `conditions` (the selector IS the route's response strategy). SSE's
+//     pre-existing leniency (it silently ignores response/conditions on the same
+//     route) is intentionally left unchanged to avoid a behavior change.
+//   - `repeat` is only meaningful with `sequence`; repeat:true without a
+//     sequence is rejected (repeat:false/absent without a sequence is the zero
+//     value and fine).
+//
+// Presence is keyed on the key being PRESENT in YAML (a non-nil slice), not on
+// it being non-empty: an explicit `sequence: []` / `random: []` is "present but
+// empty" and must surface its own empty-list error (raised in the compile
+// functions) rather than silently behaving like a route without the selector.
+// An absent key (nil slice) is simply not that kind of selector.
+//
+// Bad-weight validation for the random arms lives in compileRandom.
+func validateSelectors(rd *RouteDefYAML) error {
+	// SSE keeps its pre-existing len>0 detection (an empty `sse: []` is a no-op,
+	// unchanged). Sequence/random use non-nil so an explicit empty list reaches
+	// its own load-time error rather than silently degrading to a plain route.
+	hasSSE := len(rd.SSE) > 0
+	hasSeq := rd.Sequence != nil
+	hasRand := rd.Random != nil
+
+	// At most one of sse / sequence / random.
+	if btoi(hasSSE)+btoi(hasSeq)+btoi(hasRand) > 1 {
+		return errors.New("a route may use only one of sse, sequence, or random")
+	}
+
+	if hasSeq && (rd.Response != nil || len(rd.Conditions) > 0) {
+		return errors.New("sequence cannot be combined with response or conditions")
+	}
+	if hasRand && (rd.Response != nil || len(rd.Conditions) > 0) {
+		return errors.New("random cannot be combined with response or conditions")
+	}
+	if rd.Repeat && !hasSeq {
+		return errors.New("repeat is only valid with a sequence")
+	}
+	return nil
+}
+
+// btoi returns 1 for true and 0 for false, used to count how many mutually
+// exclusive selectors a route declares.
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// compileSequence parses a route's `sequence:` block into an ordered slice of
+// compiled responses. Each item is an inline ResponseYAML compiled via
+// compileResponse so it shares the route's {{seq}} template counter and goes
+// through the same status/headers/body-or-file path as any other response. An
+// empty list is a load-time error (a sequence must have at least one response).
+// seq is the owning route's {{seq}} counter, threaded to every item's templates.
+func compileSequence(items []ResponseYAML, seq *atomic.Uint64) ([]compiledResponse, error) {
+	if len(items) == 0 {
+		return nil, errors.New("sequence must have at least one response")
+	}
+	out := make([]compiledResponse, 0, len(items))
+	for i := range items {
+		resp, err := compileResponse(items[i], seq)
+		if err != nil {
+			return nil, fmt.Errorf("sequence item #%d: %w", i+1, err)
+		}
+		out = append(out, resp)
+	}
+	return out, nil
+}
+
+// compileRandom parses a route's `random:` block into cumulative-weight arms and
+// the total weight. Each arm's weight must be a positive integer and each arm's
+// nested Response is compiled via compileResponse (sharing the route's {{seq}}
+// counter). An empty list is a load-time error. The cumulative bounds enable an
+// O(n) request-time pick (see compiledRoute.pickRandom). seq is the owning
+// route's {{seq}} counter, threaded to every arm's templates.
+func compileRandom(arms []WeightedResponseYAML, seq *atomic.Uint64) ([]weightedResponse, int, error) {
+	if len(arms) == 0 {
+		return nil, 0, errors.New("random must have at least one arm")
+	}
+	out := make([]weightedResponse, 0, len(arms))
+	total := 0
+	for i := range arms {
+		if arms[i].Weight < 1 {
+			return nil, 0, fmt.Errorf("random arm #%d: weight must be a positive integer", i+1)
+		}
+		resp, err := compileResponse(arms[i].Response, seq)
+		if err != nil {
+			return nil, 0, fmt.Errorf("random arm #%d: %w", i+1, err)
+		}
+		total += arms[i].Weight
+		out = append(out, weightedResponse{cum: total, resp: resp})
+	}
+	return out, total, nil
 }
 
 // compileConditions parses a route's condition arms, compiling each arm's match
@@ -1071,7 +1272,14 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 
 // selectResponse chooses the response to serve for the given request data.
 //
-// Precedence:
+// The stateful/random selectors are handled first; they are mutually exclusive
+// with conditions/response (enforced at load time), so this ordering is
+// unambiguous. Both always select a response (ok is always true for them):
+//   - A sequence route advances its selection counter and returns the current
+//     item (see pickSequence for the repeat / stick-on-last semantics).
+//   - A random route picks a weighted arm (see pickRandom).
+//
+// Otherwise the conditions/top-level precedence applies:
 //  1. With conditions: the first arm whose every match rule is satisfied wins
 //     (a default arm always matches). The arms are evaluated in file order.
 //  2. If no arm matches but the route has a top-level response, that response
@@ -1079,7 +1287,17 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 //  3. Otherwise ok is false and the caller responds 404.
 //
 // A route with no conditions simply returns its top-level response.
+//
+// The data argument is unused by the sequence/random selectors (their choice is
+// counter/RNG-driven, not request-content-driven); it is still threaded through
+// for the conditions path.
 func (cr *compiledRoute) selectResponse(data map[string]any) (compiledResponse, bool) {
+	if cr.isSequence {
+		return cr.pickSequence(), true
+	}
+	if cr.isRandom {
+		return cr.pickRandom(), true
+	}
 	for i := range cr.conditions {
 		c := &cr.conditions[i]
 		if c.isDefault || matchAll(c.rules, data) {
@@ -1090,6 +1308,50 @@ func (cr *compiledRoute) selectResponse(data map[string]any) (compiledResponse, 
 		return cr.resp, true
 	}
 	return compiledResponse{}, false
+}
+
+// pickSequence advances the route's selection counter exactly once and returns
+// the response for the resulting position. The counter is incremented per
+// request (independently of the {{seq}} template counter, so a body that renders
+// {{seq}} repeatedly never skews which item is chosen).
+//
+// With seqRepeat the index loops over the list forever (n % len). Without it the
+// index advances through the list and then sticks on the last item for every
+// subsequent request (min(n, len-1)). The counter is atomic, so concurrent
+// requests each take a distinct n and the cycle stays balanced.
+func (cr *compiledRoute) pickSequence() compiledResponse {
+	n := cr.seqSel.Add(1) - 1 // 0-based: first request -> 0
+	// len(cr.sequence) >= 1 (validated at load), so length/last are safe
+	// non-negative values; compute in uint64 to match the atomic counter.
+	length := uint64(len(cr.sequence))
+	last := length - 1
+	var idx uint64
+	switch {
+	case cr.seqRepeat:
+		idx = n % length
+	case n > last:
+		idx = last // stick on the last item
+	default:
+		idx = n
+	}
+	return cr.sequence[idx]
+}
+
+// pickRandom selects one arm by weighted random draw: a value r in
+// [0, randomTotal) chooses the first arm whose cumulative upper bound exceeds r.
+// math/rand/v2's global generator is concurrency-safe, so no locking is needed.
+// (G404 is intentionally excluded in .golangci.yml — mock selection is not
+// security-sensitive.)
+func (cr *compiledRoute) pickRandom() compiledResponse {
+	r := mathrand.IntN(cr.randomTotal)
+	for i := range cr.randomArms {
+		if cr.randomArms[i].cum > r {
+			return cr.randomArms[i].resp
+		}
+	}
+	// Unreachable: r < randomTotal and the final arm's cum == randomTotal, so the
+	// loop always returns. Return the last arm defensively.
+	return cr.randomArms[len(cr.randomArms)-1].resp
 }
 
 // matchAll reports whether every rule is satisfied by the request data.
