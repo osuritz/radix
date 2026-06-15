@@ -185,6 +185,38 @@ routes:
 	}
 }
 
+func TestRoutedMockFallbackProxyMetricsWiring(t *testing.T) {
+	rec := &fakeRecorder{}
+
+	// Backend stands in for the configured fallback proxy target.
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("from-backend:" + r.URL.Path))
+	}))
+	defer backend.Close()
+
+	// A routes file with a proxy fallback and no custom routes: any unmatched
+	// request falls through to the proxy.
+	yaml := "settings:\n  fallback:\n    type: proxy\n    proxy_target: " + backend.URL + "\nroutes: []\n"
+	store := newRoutesStoreFromYAML(t, yaml)
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Metrics: rec})
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/unmatched", nil))
+
+	// The request reached the backend via the fallback proxy.
+	if resp.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want 418 from backend (proxy fallback)", resp.Code)
+	}
+	if got := rec.mockFbProxy.Load(); got != 1 {
+		t.Errorf("mockFbProxy = %d, want 1", got)
+	}
+	// The 404 fallback path must not be taken when a proxy fallback is configured.
+	if got := rec.mockFbNotFound.Load(); got != 0 {
+		t.Errorf("mockFbNotFound = %d, want 0 (proxy fallback configured)", got)
+	}
+}
+
 func TestRoutedMockTemplateErrorMetricsWiring(t *testing.T) {
 	rec := &fakeRecorder{}
 	// randomChoice with no args errors at render time -> template error + 500.
