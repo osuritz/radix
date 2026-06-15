@@ -106,7 +106,28 @@ verify_checksum() {
   [ "$actual" = "$expected" ] || die "checksum mismatch for ${filename}"
   success "checksum verified"
 }
-extract_and_install(){ die "not implemented"; }
+# Extracts only the radix binary from the archive, verifies it is executable,
+# then atomically moves it into install_dir.
+extract_and_install() {
+  local archive_path="$1" install_dir="$2" tmpdir="$3"
+
+  mkdir -p "$install_dir" 2>/dev/null \
+    || die "cannot create install directory: ${install_dir}"
+  [ -w "$install_dir" ] \
+    || die "install directory is not writable: ${install_dir}
+  Hint: run with sudo, or set RADIX_INSTALL_DIR to a writable path"
+
+  info "Extracting ${BINARY} ..."
+  tar -xzf "$archive_path" -C "$tmpdir" "${BINARY}" \
+    || die "failed to extract ${BINARY} from archive"
+
+  local extracted="${tmpdir}/${BINARY}"
+  [ -f "$extracted" ] || die "${BINARY} not found in archive"
+  [ -x "$extracted" ] || die "extracted ${BINARY} is not executable"
+
+  mv "$extracted" "${install_dir}/${BINARY}"
+  success "installed ${install_dir}/${BINARY}"
+}
 setup_path()         { die "not implemented"; }
 
 # ── main ──────────────────────────────────────────────────────────────────────
