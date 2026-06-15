@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   templates fail at load. Implemented with the standard library only
   (`net/http` + `http.Flusher`). See the README mock section and
   `examples/mock-routes.yml`.
+- **Documentation site scaffold** — a [VitePress](https://vitepress.dev/) docs
+  site under `docs/`, deployed to GitHub Pages at
+  https://osuritz.github.io/radix/ via `.github/workflows/docs.yml` (builds on
+  pull requests for validation, deploys on push to `main`). This wave ships the
+  information-architecture skeleton — home/overview, getting started, a page per
+  command (`serve`, `proxy`, `echo`, `mock`, `gencert`, `version`, `validate`),
+  a configuration reference, guides (mock, TLS/HTTPS, observability, logging),
+  and troubleshooting/FAQ — as stub pages wired into the nav and sidebar; full
+  prose lands in a follow-up. The docs are a Node-only toolchain isolated to
+  `docs/` and do not affect the Go binary or `go.mod`.
 
 ## [0.5.0] - 2026-06-14
 

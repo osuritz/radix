@@ -210,6 +210,27 @@ func TestServeCommand(t *testing.T) {
 - Add code comments for complex logic
 - Update CHANGELOG.md (will be automated)
 
+### Documentation site
+
+The public documentation site (https://osuritz.github.io/radix/) is built with
+[VitePress](https://vitepress.dev/) and lives entirely under `docs/`. It is a
+docs-only Node toolchain — it is **not** a Go dependency and does not affect the
+`radix` binary or `go.mod`.
+
+To run it locally:
+
+```bash
+cd docs
+npm install
+npm run docs:dev
+```
+
+`npm run docs:build` produces the static site under `docs/.vitepress/dist`.
+Page content lives in `docs/site/`; site config and navigation live in
+`docs/.vitepress/config.mts`. The site is built and deployed to GitHub Pages by
+`.github/workflows/docs.yml` on pushes to `main` (pull requests build for
+validation only).
+
 ## Release Process
 
 Releases are automated via GitHub Actions:
