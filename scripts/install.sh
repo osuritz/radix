@@ -47,11 +47,13 @@ detect_platform() {
 resolve_version() {
   local tag="${RADIX_VERSION:-}"
   if [ -z "$tag" ]; then
-    tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep '"tag_name"' \
+    tag="$(curl -fsSL --max-time 10 "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep -m 1 '"tag_name"' \
       | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
     [ -n "$tag" ] || die "failed to fetch latest release tag from GitHub"
   fi
+  echo "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+' \
+    || die "invalid release tag format: ${tag} (expected vX.Y.Z)"
   echo "$tag"
 }
 
