@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sequenced and weighted-random mock routes** — a custom mock route can now
+  pick its response with one of two new top-level selectors (each replacing
+  `response`/`conditions` for that route). A `sequence:` block is an ordered list
+  of inline responses (the usual `status`/`headers`/`body`-or-`file` shape) that
+  the route walks one step per request: with a route-level `repeat: true` the
+  cycle loops back to the first item after the last, and without it (the default)
+  the sequence advances to the last item and then "sticks" on it for every
+  subsequent request. A `random:` block is a list of `{weight, response}` arms;
+  each request selects an arm with probability `weight / sum(weights)` (an O(n)
+  cumulative-weight pick), useful for chaos-testing a client against a realistic
+  mix of success and error responses. The sequence selection index is a private,
+  atomic per-route counter kept separate from the `{{seq}}` template helper — so a
+  body that renders `{{seq}}` more than once never skews which item is served —
+  and, like `{{seq}}`, it resets to the start on routes-file hot-reload (a reload
+  rebuilds the route with fresh counters). Selectors are validated at load time:
+  `sse`, `sequence`, and `random` are mutually exclusive; `sequence`/`random`
+  cannot be combined with `response`/`conditions`; `repeat` is only valid with a
+  `sequence`; an empty `sequence`/`random` list and a non-positive `random` weight
+  all fail fast with a clear, route-scoped error. Implemented with the standard
+  library only (`math/rand/v2` + `sync/atomic`). See the README mock section and
+  `examples/mock-routes.yml`.
+
 ## [0.6.0] - 2026-06-15
 
 ### Added

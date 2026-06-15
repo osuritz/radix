@@ -1055,16 +1055,14 @@ func TestLoadRoutes_Errors(t *testing.T) {
 }
 
 func TestRoutes_AdvancedKeysIgnored(t *testing.T) {
-	// sequence/random/websocket/sse are not supported; they must be ignored
-	// without error, leaving the basic response (if any) intact. (conditions are
-	// supported now; see the TestRoutes_Conditions* tests.)
+	// websocket remains the only unmodeled advanced key; it must be ignored
+	// without error, leaving the basic response intact. (conditions, sse,
+	// sequence, and random are all supported now; see their dedicated tests.)
 	const src = `
 routes:
   - path: /adv
     method: GET
     response: { status: 200, body: "base" }
-    sequence:
-      - body: "x"
     websocket: true
 `
 	rec := doRouted(t, src, false, httptest.NewRequest(http.MethodGet, "/adv", nil))

@@ -1479,17 +1479,19 @@ routes:
   - path: /api/external/*
     proxy: https://api.external.com
 
-  # Sequence responses (stateful)
+  # Sequence responses (stateful): each request advances one step through the
+  # list. `repeat: true` is a route-level flag that loops the cycle back to the
+  # first item after the last; without it the sequence sticks on the last item.
   - path: /api/counter
     method: POST
+    repeat: true  # loop back to the first item after the last
     sequence:
       - body: '{"count": 1}'
       - body: '{"count": 2}'
       - body: '{"count": 3}'
-      - repeat: true  # Loop back to first
-        body: '{"count": 1, "reset": true}'
 
-  # Random response selection
+  # Random response selection: each arm has a positive integer `weight` and a
+  # nested `response`; an arm is chosen with probability weight/sum(weights).
   - path: /api/random
     method: GET
     random:
