@@ -1,0 +1,15 @@
+{
+  "name": "radix-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VitePress documentation site for radix. Docs-only Node toolchain — not a Go dependency.",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  }
+}

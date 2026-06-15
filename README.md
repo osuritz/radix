@@ -6,6 +6,8 @@
 
 Multi-mode HTTP server for local development. Provides static file serving, reverse proxy, request echo, and API mocking capabilities—all running locally with no external services or data leakage. Built in Go and distributed as a single self-contained binary across platforms, with a deliberately small, curated set of dependencies.
 
+📖 **Documentation:** https://osuritz.github.io/radix/
+
 ## Who Is This For?
 
 Radix is designed for **local development**, not production traffic. It's built for:
