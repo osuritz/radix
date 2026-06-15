@@ -206,3 +206,28 @@ routes:
     response:
       status: 401
       body: '{"error":"missing or invalid authorization"}'
+
+  # Server-Sent Events: an `sse:` block streams a text/event-stream response of
+  # scripted events instead of a single body (it replaces response/conditions for
+  # the route). Each event may set:
+  #   delay         wait before sending the event (Go duration or seconds)
+  #   event         optional SSE event name (emitted as an `event:` line)
+  #   data          templated payload (same data/funcs as a response body;
+  #                 multi-line data becomes multiple `data:` lines on the wire)
+  #   repeat        send the event this many times in total (default 1)
+  #   repeat_delay  wait between successive repeats
+  # The handler flushes after each event so clients receive them incrementally,
+  # and returns promptly when the client disconnects.
+  #
+  # Try it with: curl -N http://localhost:8080/api/stream/42
+  - path: /api/stream/:id
+    method: GET
+    sse:
+      - event: open
+        data: '{"status":"connected","id":"{{.params.id}}"}'
+      - data: '{"seq":{{seq}},"ts":"{{now}}","value":{{randomFloat 0 100}}}'
+        repeat: 5
+        repeat_delay: 1s
+      - event: close
+        delay: 500ms
+        data: '{"status":"done"}'

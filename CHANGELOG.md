@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SSE (Server-Sent Events) mock routes** — a custom mock route can now stream a
+  `text/event-stream` response by adding an `sse:` block of scripted events
+  (replacing `response`/`conditions` for that route). Each event supports `delay`
+  (wait before sending), an optional `event` name, a templated `data` payload
+  (same data context and template functions as a response body, including
+  per-route `{{seq}}`), `repeat` (total sends, default `1`), and `repeat_delay`
+  (spacing between repeats). The handler sets the streaming headers
+  (`Content-Type: text/event-stream`, `Cache-Control: no-cache`,
+  `Connection: keep-alive`), flushes after every event so clients receive them
+  incrementally, renders multi-line `data` as multiple `data:` lines per the SSE
+  spec, returns promptly on client disconnect, and ends cleanly once the script
+  is exhausted. Negative `delay`/`repeat_delay`/`repeat` and malformed `data`
+  templates fail at load. Implemented with the standard library only
+  (`net/http` + `http.Flusher`). See the README mock section and
+  `examples/mock-routes.yml`.
+
 ## [0.5.0] - 2026-06-14
 
 ### Added
