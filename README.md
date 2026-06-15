@@ -29,12 +29,30 @@ If you need a production-grade web server, use nginx, Caddy, or a cloud load bal
 | `mock` | API mocking | Develop frontend without a running backend |
 | `gencert` | TLS certificates | Generate self-signed certs for HTTPS |
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | bash
+```
+
+This installs the latest release to `~/.radix/bin` and adds it to your PATH.
+
+**Other options:**
+
+```bash
+# Pin a specific version
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | RADIX_VERSION=v0.7.0 bash
+
+# Install to a custom directory
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | RADIX_INSTALL_DIR=/usr/local/bin bash
+
+# If you have Go 1.25+
+go install github.com/osuritz/radix/cmd/radix@latest
+```
+
 ## Quick Start
 
 ```bash
-# Install
-go install github.com/osuritz/radix/cmd/radix@latest
-
 # Serve current directory
 radix serve
 
