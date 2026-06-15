@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	mathrand "math/rand/v2"
 	"net/http"
 	"net/url"
@@ -720,6 +721,14 @@ func compileResponse(resp ResponseYAML, seq *atomic.Uint64) (compiledResponse, e
 // functions) rather than silently behaving like a route without the selector.
 // An absent key (nil slice) is simply not that kind of selector.
 //
+// Note the null-vs-empty distinction this relies on: a null-valued selector key
+// (e.g. `sequence:` with no value, or `sequence: null`) decodes to a nil slice
+// and is therefore treated as ABSENT — the route falls back to a plain 200. This
+// is intentional: a key with no value reads naturally as "no selector". An
+// explicit empty list (`sequence: []` / `random: []`), by contrast, decodes to a
+// non-nil empty slice — "present but empty" — and surfaces the empty-list load
+// error, catching the common placeholder mistake.
+//
 // Bad-weight validation for the random arms lives in compileRandom.
 func validateSelectors(rd *RouteDefYAML) error {
 	// SSE keeps its pre-existing len>0 detection (an empty `sse: []` is a no-op,
@@ -791,6 +800,14 @@ func compileRandom(arms []WeightedResponseYAML, seq *atomic.Uint64) ([]weightedR
 	for i := range arms {
 		if arms[i].Weight < 1 {
 			return nil, 0, fmt.Errorf("random arm #%d: weight must be a positive integer", i+1)
+		}
+		// Guard the running sum against int overflow before adding. weight is now
+		// known >= 1 and total >= 0, so total+weight overflows iff
+		// total > MaxInt-weight. A pathological routes file with enormous weights
+		// would otherwise wrap total to <= 0, which makes the request-time
+		// mathrand.IntN(randomTotal) panic; reject it fail-fast at load instead.
+		if total > math.MaxInt-arms[i].Weight {
+			return nil, 0, fmt.Errorf("random arm #%d: total weight overflows int", i+1)
 		}
 		resp, err := compileResponse(arms[i].Response, seq)
 		if err != nil {

@@ -453,6 +453,23 @@ routes:
 			want: "weight must be a positive integer",
 		},
 		{
+			// Two positive arm weights whose sum exceeds MaxInt must be rejected at
+			// load time (otherwise the running total wraps and request-time
+			// mathrand.IntN panics). 9223372036854775807 == math.MaxInt on this
+			// (64-bit) platform; adding 1 overflows.
+			name: "weight sum overflows int",
+			src: `
+routes:
+  - path: /x
+    random:
+      - weight: 9223372036854775807
+        response: { status: 200, body: a }
+      - weight: 1
+        response: { status: 200, body: b }
+`,
+			want: "total weight overflows int",
+		},
+		{
 			name: "sequence + response",
 			src: `
 routes:
