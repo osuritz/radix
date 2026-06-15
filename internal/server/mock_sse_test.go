@@ -17,11 +17,22 @@ import (
 // http.Flusher.
 func sseFront(t *testing.T, yamlSrc string) *httptest.Server {
 	t.Helper()
+	srv, _ := sseFrontWithMetrics(t, yamlSrc)
+	return srv
+}
+
+// sseFrontWithMetrics is sseFront with a fakeRecorder wired in so per-command
+// mock counters (template renders/errors) can be asserted. It returns the live
+// server and the recorder. As with sseFront a real server is required because
+// SSE needs an http.Flusher.
+func sseFrontWithMetrics(t *testing.T, yamlSrc string) (*httptest.Server, *fakeRecorder) {
+	t.Helper()
+	rec := &fakeRecorder{}
 	store := newStore(t, yamlSrc, t.TempDir())
-	h := NewRoutedHandler(RoutedHandlerConfig{Store: store})
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store, Metrics: rec})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, rec
 }
 
 // readSSEEvent reads one SSE event (lines up to and including the blank-line
@@ -481,5 +492,92 @@ routes:
 				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestSSE_TemplateRenderMetricsWiring proves an SSE route counts one
+// template_renders per event instance actually streamed (so a repeat counts
+// once per send), and that an event with no data template is not counted as a
+// render. The route below streams three event instances backed by a data
+// template (one single event plus two repeats of another) and one event with no
+// data template, so the expected render count is 3.
+func TestSSE_TemplateRenderMetricsWiring(t *testing.T) {
+	const src = `
+routes:
+  - path: /events
+    sse:
+      - data: 'item={{.params.id}}'
+      - data: 'tick {{seq}}'
+        repeat: 2
+      - event: ping
+`
+	srv, rec := sseFrontWithMetrics(t, src)
+	resp, err := http.Get(srv.URL + "/events")
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Drain the whole stream so every scripted event is sent (and counted) before
+	// asserting. The script has fixed length and ends in EOF.
+	br := bufio.NewReader(resp.Body)
+	events := 0
+	for {
+		if _, rerr := br.ReadString('\n'); rerr != nil {
+			break
+		}
+		// Count event terminators (blank lines) to confirm the stream completed.
+		events++
+	}
+
+	// One render for the first event, two for the repeated event = 3. The
+	// data-less third event must not be counted as a render.
+	if got := rec.mockRenders.Load(); got != 3 {
+		t.Errorf("mockRenders = %d, want 3 (one per streamed event with a data template, repeats included)", got)
+	}
+	if got := rec.mockErrors.Load(); got != 0 {
+		t.Errorf("mockErrors = %d, want 0", got)
+	}
+}
+
+// TestSSE_TemplateErrorMetricsWiring proves a data template that errors at
+// render time increments template_errors. {{randomChoice}} (no args) errors when
+// executed, mirroring the buffered-route error test. Because the SSE headers are
+// already sent, the failure is surfaced as an SSE comment and the stream stops,
+// so no render is counted for the failing event.
+func TestSSE_TemplateErrorMetricsWiring(t *testing.T) {
+	const src = `
+routes:
+  - path: /boom
+    sse:
+      - data: '{{randomChoice}}'
+`
+	srv, rec := sseFrontWithMetrics(t, src)
+	resp, err := http.Get(srv.URL + "/boom")
+	if err != nil {
+		t.Fatalf("GET /boom: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Drain the stream; the handler writes an ": error rendering event" comment
+	// and closes once the data template fails.
+	br := bufio.NewReader(resp.Body)
+	var body strings.Builder
+	for {
+		line, rerr := br.ReadString('\n')
+		body.WriteString(line)
+		if rerr != nil {
+			break
+		}
+	}
+
+	if got := rec.mockErrors.Load(); got != 1 {
+		t.Errorf("mockErrors = %d, want 1", got)
+	}
+	if got := rec.mockRenders.Load(); got != 0 {
+		t.Errorf("mockRenders = %d, want 0 on render error", got)
+	}
+	if !strings.Contains(body.String(), ": error rendering event") {
+		t.Errorf("stream = %q, want it to contain an SSE error comment", body.String())
 	}
 }

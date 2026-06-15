@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-command metrics for `echo`, `mock`, and `proxy`** — the existing
+  `/_metrics` endpoint now also exports counters specific to whichever command is
+  running, in both JSON and Prometheus formats. `echo` reports delays applied,
+  custom-body responses, and path-derived status hits; `mock` reports route
+  matches (built-in vs custom), template renders, template errors, routes-file
+  hot reloads, fail-rate injections, and fallback hits (404 vs proxy); `proxy`
+  reports auth-header injections and streaming (SSE/ndjson) connections. Because
+  radix runs one command per process, only the active command's section is
+  emitted — the JSON snapshot gains a nested `command` object and Prometheus gains
+  families like `radix_mock_route_matches_total{kind="custom"}`,
+  `radix_mock_fallback_total{type="not_found"}`, and
+  `radix_proxy_auth_injections_total`, each carrying the `command="<cmd>"` label.
+  Counters live on the shared, lock-free collector (atomics) and are a complete
+  no-op when metrics are disabled (`--metrics=false`) — zero overhead and no
+  behavior change to request handling. Standard library only. See the README
+  "Per-command counters" section.
 - **SSE (Server-Sent Events) mock routes** — a custom mock route can now stream a
   `text/event-stream` response by adding an `sse:` block of scripted events
   (replacing `response`/`conditions` for that route). Each event supports `delay`

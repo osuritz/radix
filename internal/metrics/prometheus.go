@@ -78,6 +78,71 @@ func (e *PrometheusExporter) Export(w io.Writer, metrics *Metrics) {
 	fmt.Fprintf(w, "# TYPE radix_request_rate_per_second gauge\n")
 	fmt.Fprintf(w, "radix_request_rate_per_second{command=\"%s\"} %.4f\n",
 		e.command, metrics.Requests.RatePerSecond)
+
+	// Per-command counters. Only the active command's section is non-nil, so a
+	// proxy process exports only the proxy_* families, a mock process only the
+	// mock_* families, etc. Commands with no per-command counters (e.g. serve)
+	// have a nil section and emit nothing here.
+	e.writeCommandMetrics(w, metrics.Command)
+}
+
+// writeCommandMetrics writes the per-command counter families for whichever
+// command is active. Each family carries the command="..." label for parity with
+// the generic radix_* metrics. A nil section emits nothing.
+func (e *PrometheusExporter) writeCommandMetrics(w io.Writer, cmd *CommandMetrics) {
+	if cmd == nil {
+		return
+	}
+	switch {
+	case cmd.Echo != nil:
+		e.writeEchoMetrics(w, cmd.Echo)
+	case cmd.Mock != nil:
+		e.writeMockMetrics(w, cmd.Mock)
+	case cmd.Proxy != nil:
+		e.writeProxyMetrics(w, cmd.Proxy)
+	}
+}
+
+// writeEchoMetrics writes the echo command's per-command counter families.
+func (e *PrometheusExporter) writeEchoMetrics(w io.Writer, m *EchoMetrics) {
+	fmt.Fprintln(w)
+	e.counter(w, "radix_echo_delays_total", "Echo responses that applied a delay", m.DelaysApplied)
+	e.counter(w, "radix_echo_custom_body_total", "Echo responses served from the configured literal body", m.CustomBodyResponse)
+	e.counter(w, "radix_echo_path_status_total", "Echo responses whose status was derived from the request path", m.PathStatusHits)
+}
+
+// writeMockMetrics writes the mock command's per-command counter families.
+func (e *PrometheusExporter) writeMockMetrics(w io.Writer, m *MockMetrics) {
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "# HELP radix_mock_route_matches_total Mock route matches by kind\n")
+	fmt.Fprintf(w, "# TYPE radix_mock_route_matches_total counter\n")
+	fmt.Fprintf(w, "radix_mock_route_matches_total{command=\"%s\",kind=\"builtin\"} %d\n", e.command, m.RouteMatchesBuiltin)
+	fmt.Fprintf(w, "radix_mock_route_matches_total{command=\"%s\",kind=\"custom\"} %d\n", e.command, m.RouteMatchesCustom)
+
+	e.counter(w, "radix_mock_template_renders_total", "Successful mock response template renders", m.TemplateRenders)
+	e.counter(w, "radix_mock_template_errors_total", "Failed mock response template renders", m.TemplateErrors)
+	e.counter(w, "radix_mock_reloads_total", "Successful mock routes-file hot reloads", m.Reloads)
+	e.counter(w, "radix_mock_fail_injections_total", "Mock requests short-circuited by the random fail-rate", m.FailInjections)
+
+	fmt.Fprintf(w, "# HELP radix_mock_fallback_total Unmatched mock requests served by the fallback, by type\n")
+	fmt.Fprintf(w, "# TYPE radix_mock_fallback_total counter\n")
+	fmt.Fprintf(w, "radix_mock_fallback_total{command=\"%s\",type=\"not_found\"} %d\n", e.command, m.FallbackNotFound)
+	fmt.Fprintf(w, "radix_mock_fallback_total{command=\"%s\",type=\"proxy\"} %d\n", e.command, m.FallbackProxy)
+}
+
+// writeProxyMetrics writes the proxy command's per-command counter families.
+func (e *PrometheusExporter) writeProxyMetrics(w io.Writer, m *ProxyMetrics) {
+	fmt.Fprintln(w)
+	e.counter(w, "radix_proxy_auth_injections_total", "Proxied requests that had auth headers injected", m.AuthInjections)
+	e.counter(w, "radix_proxy_stream_connections_total", "Proxied responses detected as streaming (SSE/ndjson) connections", m.StreamConnections)
+}
+
+// counter writes a single command-labeled counter family (HELP, TYPE, and the
+// sample line) for the per-command metrics.
+func (e *PrometheusExporter) counter(w io.Writer, name, help string, value uint64) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s counter\n", name)
+	fmt.Fprintf(w, "%s{command=\"%s\"} %d\n", name, e.command, value)
 }
 
 // writeComment writes a comment line

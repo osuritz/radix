@@ -30,6 +30,21 @@ type ProxyConfig struct {
 	// setting. A negative value additionally flushes large non-streaming
 	// (known Content-Length) bodies after every copied write chunk.
 	FlushInterval time.Duration
+
+	// Metrics, when non-nil, records per-command proxy counters. The reverse
+	// proxy uses it to count streaming (SSE/ndjson) responses, detected from the
+	// backend response Content-Type. It is nil when metrics are disabled;
+	// ProxyMetricsRecorder methods are nil-safe so recording never affects the
+	// proxied response.
+	Metrics ProxyMetricsRecorder
+}
+
+// ProxyMetricsRecorder records the proxy command's per-command counters. It is
+// satisfied by *metrics.Collector; the server package depends on this narrow
+// interface rather than the metrics package so the handler stays decoupled. All
+// methods must be safe to call on a nil receiver (the concrete collector's are).
+type ProxyMetricsRecorder interface {
+	RecordProxyStream()
 }
 
 // NewReverseProxy creates an http.Handler that proxies requests to the target URL.
@@ -41,6 +56,12 @@ type ProxyConfig struct {
 // headers from the inbound request and strips any client-supplied forwarding
 // headers first, so spoofed values are never passed through to the backend
 // (this proxy does not trust client-provided X-Forwarded-* values).
+//
+// ProxyConfig is passed by value (matching the sibling NewEchoHandler /
+// NewMockHandler / NewFileServer constructors); this runs once at startup, not
+// on a hot path.
+//
+//nolint:gocritic // hugeParam: by-value config is intentional, see doc comment above.
 func NewReverseProxy(cfg ProxyConfig) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		// Rewrite is the stdlib-recommended replacement for Director. The
@@ -97,6 +118,9 @@ func NewReverseProxy(cfg ProxyConfig) http.Handler {
 	// upstream reverse proxy (e.g. nginx) sitting in front of radix.
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if isStreamingContentType(resp.Header.Get("Content-Type")) {
+			if cfg.Metrics != nil {
+				cfg.Metrics.RecordProxyStream()
+			}
 			if resp.Header.Get("X-Accel-Buffering") == "" {
 				resp.Header.Set("X-Accel-Buffering", "no")
 			}

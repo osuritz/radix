@@ -28,6 +28,7 @@ type RoutesStore struct {
 	path      string
 	logf      func(format string, args ...any)
 	overrides func(*RouteSettings) // applied to freshly-loaded settings on each (re)load
+	metrics   MockMetricsRecorder  // records hot reloads; nil when metrics are disabled
 }
 
 // NewRoutesStore creates a store seeded with an initial CompiledRoutes. logf, if
@@ -40,6 +41,13 @@ func NewRoutesStore(path string, initial *CompiledRoutes, logf func(format strin
 	s := &RoutesStore{path: path, logf: logf}
 	s.current.Store(initial)
 	return s
+}
+
+// SetMetricsRecorder installs the recorder that counts successful hot reloads.
+// It is nil-safe to leave unset (no reload counting); pass the shared collector
+// to enable it. It must be called before the watcher starts.
+func (s *RoutesStore) SetMetricsRecorder(rec MockMetricsRecorder) {
+	s.metrics = rec
 }
 
 // SetSettingsOverride installs a function that adjusts the effective settings of
@@ -83,6 +91,9 @@ func (s *RoutesStore) Reload() error {
 		s.overrides(&compiled.settings)
 	}
 	s.current.Store(compiled)
+	if s.metrics != nil {
+		s.metrics.RecordMockReload()
+	}
 	s.logf("mock: routes reloaded from %s", s.path)
 	return nil
 }
@@ -186,6 +197,13 @@ type RoutedHandlerConfig struct {
 	// FallbackProxyTLS is an optional TLS config applied to a fallback proxy
 	// (used when the active settings select a TLS backend). Usually nil.
 	FallbackProxyTLS *tls.Config
+
+	// Metrics, when non-nil, records per-command mock counters for the routed
+	// handler (custom/built-in route matches, template renders/errors, fail
+	// injections, and fallback hits). It is nil when metrics are disabled;
+	// MockMetricsRecorder methods are nil-safe so recording never affects
+	// responses.
+	Metrics MockMetricsRecorder
 }
 
 // NewRoutedHandler builds the layered mock handler: custom routes (from the
@@ -214,7 +232,10 @@ func NewRoutedHandler(cfg RoutedHandlerConfig) http.Handler {
 	dispatch := func(w http.ResponseWriter, r *http.Request, routes *CompiledRoutes) {
 		// 1-5: custom route match wins.
 		if cr, params, ok := routes.match(r.Method, r.URL.Path); ok {
-			cr.serve(w, r, params, routes.baseDir)
+			if cfg.Metrics != nil {
+				cfg.Metrics.RecordMockRouteMatch(true)
+			}
+			cr.serve(w, r, params, routes.baseDir, cfg.Metrics)
 			return
 		}
 
@@ -224,29 +245,36 @@ func NewRoutedHandler(cfg RoutedHandlerConfig) http.Handler {
 		// own 404.
 		if builtins != nil {
 			if _, pattern := builtins.Handler(r); pattern != "" {
+				if cfg.Metrics != nil {
+					cfg.Metrics.RecordMockRouteMatch(false)
+				}
 				builtins.ServeHTTP(w, r)
 				return
 			}
 		}
 
 		// 7: fallback.
-		serveFallback(w, r, routes.settings.Fallback, cfg.FallbackProxyTLS)
+		serveFallback(w, r, routes.settings.Fallback, cfg.FallbackProxyTLS, cfg.Metrics)
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		routes := cfg.Store.Load()
 		// Apply the effective global latency/fail-rate from the live snapshot so
 		// they hot-reload with the file (CLI overrides are already baked in).
-		applyLatencyAndFailures(w, r, routes.settings.latencyFail(), func(w http.ResponseWriter, r *http.Request) {
+		applyLatencyAndFailures(w, r, routes.settings.latencyFail(cfg.Metrics), func(w http.ResponseWriter, r *http.Request) {
 			dispatch(w, r, routes)
 		})
 	})
 }
 
 // serveFallback handles requests that matched neither a custom route nor a
-// built-in endpoint, per the configured fallback policy.
-func serveFallback(w http.ResponseWriter, r *http.Request, fb FallbackConfig, tlsConfig *tls.Config) {
+// built-in endpoint, per the configured fallback policy. rec, when non-nil,
+// records the fallback hit (404 vs proxy).
+func serveFallback(w http.ResponseWriter, r *http.Request, fb FallbackConfig, tlsConfig *tls.Config, rec MockMetricsRecorder) {
 	if fb.Type == FallbackProxy {
+		if rec != nil {
+			rec.RecordMockFallback("proxy")
+		}
 		target, err := url.Parse(fb.ProxyTarget)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("mock: invalid fallback proxy target: %v", err), http.StatusBadGateway)
@@ -254,6 +282,9 @@ func serveFallback(w http.ResponseWriter, r *http.Request, fb FallbackConfig, tl
 		}
 		NewReverseProxy(ProxyConfig{Target: target, TLSConfig: tlsConfig}).ServeHTTP(w, r)
 		return
+	}
+	if rec != nil {
+		rec.RecordMockFallback("not_found")
 	}
 	http.NotFound(w, r)
 }

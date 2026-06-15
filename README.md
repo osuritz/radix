@@ -552,6 +552,33 @@ radix echo --metrics=false                              # no admin server at all
   differ from the app port (validated at startup and by `radix validate`).
 - `--metrics=false` / `metrics.enabled: false` starts no admin server.
 
+### Per-command counters
+
+Alongside the generic request/latency/bandwidth metrics above, the `echo`, `mock`,
+and `proxy` commands export counters specific to their mode. Because radix runs
+exactly one command per process, only the running command's section appears: the
+JSON snapshot carries a nested `command` object (with an `echo`, `mock`, or `proxy`
+key), and the Prometheus exposition emits only that command's families. Commands
+without per-command counters (e.g. `serve`) omit the section entirely.
+
+| Command | JSON (`command.<cmd>.…`) | Prometheus | Meaning |
+| --- | --- | --- | --- |
+| `echo` | `delays_applied` | `radix_echo_delays_total` | responses that applied a delay |
+| `echo` | `custom_body_responses` | `radix_echo_custom_body_total` | responses served from the configured literal body |
+| `echo` | `path_status_hits` | `radix_echo_path_status_total` | responses whose status was derived from the path (e.g. `/404`) |
+| `mock` | `route_matches_builtin` / `route_matches_custom` | `radix_mock_route_matches_total{kind="builtin\|custom"}` | route matches by kind (built-in endpoint vs custom YAML route) |
+| `mock` | `template_renders` | `radix_mock_template_renders_total` | successful response/file/SSE template renders |
+| `mock` | `template_errors` | `radix_mock_template_errors_total` | template render failures |
+| `mock` | `reloads` | `radix_mock_reloads_total` | successful routes-file hot reloads |
+| `mock` | `fail_injections` | `radix_mock_fail_injections_total` | requests short-circuited by the random fail-rate |
+| `mock` | `fallback_not_found` / `fallback_proxy` | `radix_mock_fallback_total{type="not_found\|proxy"}` | unmatched-request fallback hits by type |
+| `proxy` | `auth_injections` | `radix_proxy_auth_injections_total` | requests that had auth headers injected |
+| `proxy` | `stream_connections` | `radix_proxy_stream_connections_total` | streaming (SSE/ndjson) responses observed |
+
+Every per-command family carries the same `command="<cmd>"` label as the generic
+`radix_*` metrics. Counting is free when metrics are enabled and a complete no-op
+when `--metrics=false` (no overhead, no behavior change).
+
 The admin server shuts down gracefully alongside the main server on `SIGINT` /
 `SIGTERM`. (Note: `echo` and `mock` still serve their own simple `/_health` and
 `/_ready` JSON endpoints on the app port for backward compatibility; `/healthz`

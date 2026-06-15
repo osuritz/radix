@@ -131,8 +131,18 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Build echo handler.
-	echoHandler := server.NewEchoHandler(server.EchoConfig{
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux. Build it before
+	// the handler so the handler can record per-command echo counters.
+	var collector *metrics.Collector
+	if cfg.Metrics.Enabled {
+		collector = metrics.NewCollector("echo", version.Version)
+	}
+
+	// Build echo handler. The collector is passed only when metrics are enabled so
+	// the EchoMetricsRecorder field stays a nil interface when disabled (no
+	// typed-nil), keeping the handler's per-command recording a true no-op.
+	echoCfg := server.EchoConfig{
 		Status:         cfg.Echo.Status,
 		Delay:          cfg.Echo.Delay,
 		DelayJitter:    cfg.Echo.DelayJitter,
@@ -146,17 +156,14 @@ func runEcho(cmd *cobra.Command, _ []string) error {
 		Pretty:         cfg.Echo.Pretty,
 		StatusFromPath: cfg.Echo.StatusFromPath,
 		DelayFromPath:  cfg.Echo.DelayFromPath,
-	})
+	}
+	if collector != nil {
+		echoCfg.Metrics = collector
+	}
+	echoHandler := server.NewEchoHandler(echoCfg)
 
 	// Build handler chain using a mux.
 	mux := http.NewServeMux()
-
-	// Set up metrics if enabled. The collector is shared with the admin server;
-	// the /_metrics endpoint is exposed there, not on the app mux.
-	var collector *metrics.Collector
-	if cfg.Metrics.Enabled {
-		collector = metrics.NewCollector("echo", version.Version)
-	}
 
 	// Health and readiness endpoints (not echoed).
 	mux.HandleFunc("/_health", func(w http.ResponseWriter, _ *http.Request) {

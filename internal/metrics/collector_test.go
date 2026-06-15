@@ -343,3 +343,288 @@ func TestCollectorConcurrency(t *testing.T) {
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || contains(s[1:], substr)))
 }
+
+// prometheusOutput renders the collector's Prometheus exposition for assertions.
+func prometheusOutput(t *testing.T, c *Collector) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/_metrics", nil)
+	rec := httptest.NewRecorder()
+	c.Handler("prometheus")(rec, req)
+	return rec.Body.String()
+}
+
+// TestCommandMetricsEcho verifies the echo per-command counters increment and
+// surface in both the JSON snapshot and the Prometheus output, and that only the
+// echo section is emitted.
+func TestCommandMetricsEcho(t *testing.T) {
+	c := NewCollector("echo", "1.0.0")
+
+	c.RecordEchoDelay()
+	c.RecordEchoDelay()
+	c.RecordEchoCustomBody()
+	c.RecordEchoPathStatus()
+	c.RecordEchoPathStatus()
+	c.RecordEchoPathStatus()
+
+	snap := c.Snapshot()
+	if snap.Command.Echo == nil {
+		t.Fatal("snapshot Command.Echo is nil for echo command")
+	}
+	if snap.Command.Mock != nil || snap.Command.Proxy != nil {
+		t.Error("non-echo command sections should be nil for echo command")
+	}
+	if got := snap.Command.Echo.DelaysApplied; got != 2 {
+		t.Errorf("DelaysApplied = %d, want 2", got)
+	}
+	if got := snap.Command.Echo.CustomBodyResponse; got != 1 {
+		t.Errorf("CustomBodyResponse = %d, want 1", got)
+	}
+	if got := snap.Command.Echo.PathStatusHits; got != 3 {
+		t.Errorf("PathStatusHits = %d, want 3", got)
+	}
+
+	out := prometheusOutput(t, c)
+	for _, want := range []string{
+		`radix_echo_delays_total{command="echo"} 2`,
+		`radix_echo_custom_body_total{command="echo"} 1`,
+		`radix_echo_path_status_total{command="echo"} 3`,
+	} {
+		if !contains(out, want) {
+			t.Errorf("Prometheus output missing %q\n%s", want, out)
+		}
+	}
+	// The other commands' families must not appear.
+	for _, unexpected := range []string{"radix_mock_", "radix_proxy_"} {
+		if contains(out, unexpected) {
+			t.Errorf("Prometheus output unexpectedly contains %q", unexpected)
+		}
+	}
+}
+
+// TestCommandMetricsMock verifies the mock per-command counters increment and
+// surface in both the JSON snapshot and the Prometheus output.
+func TestCommandMetricsMock(t *testing.T) {
+	c := NewCollector("mock", "1.0.0")
+
+	c.RecordMockRouteMatch(true)  // custom
+	c.RecordMockRouteMatch(true)  // custom
+	c.RecordMockRouteMatch(false) // builtin
+	c.RecordMockTemplateRender()
+	c.RecordMockTemplateError()
+	c.RecordMockReload()
+	c.RecordMockFailInjection()
+	c.RecordMockFallback("not_found")
+	c.RecordMockFallback("404") // alias for not_found
+	c.RecordMockFallback("proxy")
+
+	snap := c.Snapshot()
+	m := snap.Command.Mock
+	if m == nil {
+		t.Fatal("snapshot Command.Mock is nil for mock command")
+	}
+	if m.RouteMatchesCustom != 2 {
+		t.Errorf("RouteMatchesCustom = %d, want 2", m.RouteMatchesCustom)
+	}
+	if m.RouteMatchesBuiltin != 1 {
+		t.Errorf("RouteMatchesBuiltin = %d, want 1", m.RouteMatchesBuiltin)
+	}
+	if m.TemplateRenders != 1 {
+		t.Errorf("TemplateRenders = %d, want 1", m.TemplateRenders)
+	}
+	if m.TemplateErrors != 1 {
+		t.Errorf("TemplateErrors = %d, want 1", m.TemplateErrors)
+	}
+	if m.Reloads != 1 {
+		t.Errorf("Reloads = %d, want 1", m.Reloads)
+	}
+	if m.FailInjections != 1 {
+		t.Errorf("FailInjections = %d, want 1", m.FailInjections)
+	}
+	if m.FallbackNotFound != 2 {
+		t.Errorf("FallbackNotFound = %d, want 2", m.FallbackNotFound)
+	}
+	if m.FallbackProxy != 1 {
+		t.Errorf("FallbackProxy = %d, want 1", m.FallbackProxy)
+	}
+
+	out := prometheusOutput(t, c)
+	for _, want := range []string{
+		`radix_mock_route_matches_total{command="mock",kind="builtin"} 1`,
+		`radix_mock_route_matches_total{command="mock",kind="custom"} 2`,
+		`radix_mock_template_renders_total{command="mock"} 1`,
+		`radix_mock_template_errors_total{command="mock"} 1`,
+		`radix_mock_reloads_total{command="mock"} 1`,
+		`radix_mock_fail_injections_total{command="mock"} 1`,
+		`radix_mock_fallback_total{command="mock",type="not_found"} 2`,
+		`radix_mock_fallback_total{command="mock",type="proxy"} 1`,
+	} {
+		if !contains(out, want) {
+			t.Errorf("Prometheus output missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestCommandMetricsProxy verifies the proxy per-command counters increment and
+// surface in both the JSON snapshot and the Prometheus output.
+func TestCommandMetricsProxy(t *testing.T) {
+	c := NewCollector("proxy", "1.0.0")
+
+	c.RecordProxyAuthInjection()
+	c.RecordProxyAuthInjection()
+	c.RecordProxyStream()
+
+	snap := c.Snapshot()
+	p := snap.Command.Proxy
+	if p == nil {
+		t.Fatal("snapshot Command.Proxy is nil for proxy command")
+	}
+	if p.AuthInjections != 2 {
+		t.Errorf("AuthInjections = %d, want 2", p.AuthInjections)
+	}
+	if p.StreamConnections != 1 {
+		t.Errorf("StreamConnections = %d, want 1", p.StreamConnections)
+	}
+
+	out := prometheusOutput(t, c)
+	for _, want := range []string{
+		`radix_proxy_auth_injections_total{command="proxy"} 2`,
+		`radix_proxy_stream_connections_total{command="proxy"} 1`,
+	} {
+		if !contains(out, want) {
+			t.Errorf("Prometheus output missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestCommandMetricsJSONRoundTrip confirms the command section serializes with
+// the documented JSON keys and round-trips for the active command only.
+func TestCommandMetricsJSONRoundTrip(t *testing.T) {
+	c := NewCollector("mock", "1.0.0")
+	c.RecordMockRouteMatch(true)
+
+	req := httptest.NewRequest("GET", "/_metrics", nil)
+	rec := httptest.NewRecorder()
+	c.Handler("json")(rec, req)
+
+	// Decode into a generic map to assert the on-the-wire key shape.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	cmdRaw, ok := raw["command"]
+	if !ok {
+		t.Fatal("JSON snapshot missing top-level \"command\" object")
+	}
+	var cmd map[string]json.RawMessage
+	if err := json.Unmarshal(cmdRaw, &cmd); err != nil {
+		t.Fatalf("failed to parse command object: %v", err)
+	}
+	if _, ok := cmd["mock"]; !ok {
+		t.Error("command object missing \"mock\" section")
+	}
+	if _, ok := cmd["echo"]; ok {
+		t.Error("command object should omit \"echo\" section for mock command")
+	}
+	if _, ok := cmd["proxy"]; ok {
+		t.Error("command object should omit \"proxy\" section for mock command")
+	}
+}
+
+// TestCommandMetricsOmittedForServe confirms a command without per-command
+// counters (e.g. serve) omits the "command" object entirely.
+func TestCommandMetricsOmittedForServe(t *testing.T) {
+	c := NewCollector("serve", "1.0.0")
+
+	snap := c.Snapshot()
+	if snap.Command != nil {
+		t.Error("Command section should be nil for the serve command")
+	}
+
+	req := httptest.NewRequest("GET", "/_metrics", nil)
+	rec := httptest.NewRecorder()
+	c.Handler("json")(rec, req)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	if _, ok := raw["command"]; ok {
+		t.Error("serve snapshot should omit the \"command\" object")
+	}
+}
+
+// TestCommandMetricsReset confirms Reset clears the per-command counters.
+func TestCommandMetricsReset(t *testing.T) {
+	c := NewCollector("mock", "1.0.0")
+	c.RecordMockRouteMatch(true)
+	c.RecordMockTemplateRender()
+	c.RecordMockReload()
+
+	c.Reset()
+
+	m := c.Snapshot().Command.Mock
+	if m == nil {
+		t.Fatal("Command.Mock is nil after reset")
+	}
+	if m.RouteMatchesCustom != 0 || m.TemplateRenders != 0 || m.Reloads != 0 {
+		t.Errorf("per-command counters not cleared after reset: %+v", m)
+	}
+}
+
+// TestNilCollectorRecordingIsNoOp confirms every Record* method is safe to call
+// on a nil *Collector (the disabled-metrics case) and never panics.
+func TestNilCollectorRecordingIsNoOp(_ *testing.T) {
+	var c *Collector // nil, as when metrics are disabled
+
+	// None of these may panic.
+	c.RecordEchoDelay()
+	c.RecordEchoCustomBody()
+	c.RecordEchoPathStatus()
+	c.RecordMockRouteMatch(true)
+	c.RecordMockRouteMatch(false)
+	c.RecordMockTemplateRender()
+	c.RecordMockTemplateError()
+	c.RecordMockReload()
+	c.RecordMockFailInjection()
+	c.RecordMockFallback("not_found")
+	c.RecordMockFallback("proxy")
+	c.RecordProxyAuthInjection()
+	c.RecordProxyStream()
+
+	// RecordRequest is also exercised concurrently with the per-command counters
+	// elsewhere; the no-op guarantee is the focus here.
+}
+
+// TestCommandMetricsConcurrency exercises the per-command counters under
+// concurrent writers to confirm they are race-free (run with -race).
+func TestCommandMetricsConcurrency(t *testing.T) {
+	c := NewCollector("mock", "1.0.0")
+
+	const goroutines = 10
+	const iterations = 100
+	done := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < iterations; j++ {
+				c.RecordMockRouteMatch(true)
+				c.RecordMockTemplateRender()
+			}
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	m := c.Snapshot().Command.Mock
+	if m == nil {
+		t.Fatal("Command.Mock is nil")
+	}
+	want := uint64(goroutines * iterations)
+	if m.RouteMatchesCustom != want {
+		t.Errorf("RouteMatchesCustom = %d, want %d", m.RouteMatchesCustom, want)
+	}
+	if m.TemplateRenders != want {
+		t.Errorf("TemplateRenders = %d, want %d", m.TemplateRenders, want)
+	}
+}

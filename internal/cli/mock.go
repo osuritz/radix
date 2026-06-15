@@ -155,12 +155,29 @@ func runMock(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux. It is built
+	// before the routes store and handlers so they can record per-command mock
+	// counters (route matches, template renders/errors, reloads, fail injections,
+	// fallback hits).
+	var collector *metrics.Collector
+	if cfg.Metrics.Enabled {
+		collector = metrics.NewCollector("mock", version.Version)
+	}
+	// mockRec is the recorder passed to the handlers/store. It stays a nil
+	// interface when metrics are disabled (no typed-nil), so the per-command
+	// recording is a true no-op rather than relying solely on the nil-safe methods.
+	var mockRec server.MockMetricsRecorder
+	if collector != nil {
+		mockRec = collector
+	}
+
 	// Load custom routes (if any). The store overlays explicitly-set CLI flags
 	// over the file values so CLI flags win; the effective merged settings are
 	// then validated below so file-supplied fail-rate/fail-status are checked too.
 	var routesStore *server.RoutesStore
 	if cfg.Mock.Routes != "" {
-		store, sErr := buildRoutesStore(ctx, cmd)
+		store, sErr := buildRoutesStore(ctx, cmd, mockRec)
 		if sErr != nil {
 			return sErr
 		}
@@ -177,6 +194,7 @@ func runMock(cmd *cobra.Command, args []string) error {
 		LatencyJitter: jitter,
 		FailRate:      cfg.Mock.FailRate,
 		FailStatus:    cfg.Mock.FailStatus,
+		Metrics:       mockRec,
 	}
 
 	// Build the mock handler: routed (custom routes -> built-ins -> fallback)
@@ -193,6 +211,7 @@ func runMock(cmd *cobra.Command, args []string) error {
 			Store:   routesStore,
 			Builtin: cfg.Mock.Builtin,
 			Prefix:  cfg.Mock.Prefix,
+			Metrics: mockRec,
 		})
 	} else {
 		mockHandler = server.NewMockHandler(mockCfg)
@@ -200,13 +219,6 @@ func runMock(cmd *cobra.Command, args []string) error {
 
 	// Build handler chain using a mux.
 	mux := http.NewServeMux()
-
-	// Set up metrics if enabled. The collector is shared with the admin server;
-	// the /_metrics endpoint is exposed there, not on the app mux.
-	var collector *metrics.Collector
-	if cfg.Metrics.Enabled {
-		collector = metrics.NewCollector("mock", version.Version)
-	}
 
 	// Health and readiness endpoints (kept at root regardless of --prefix).
 	mux.HandleFunc("/_health", func(w http.ResponseWriter, _ *http.Request) {
@@ -300,7 +312,7 @@ func resolveRoutesArg(cmd *cobra.Command, args []string) error {
 // seeds an atomic store, and — when --watch is set — starts the hot-reload
 // watcher bound to ctx. It also reflects the effective CORS setting back into
 // cfg so the startup CORS middleware sees the merged value.
-func buildRoutesStore(ctx context.Context, cmd *cobra.Command) (*server.RoutesStore, error) {
+func buildRoutesStore(ctx context.Context, cmd *cobra.Command, rec server.MockMetricsRecorder) (*server.RoutesStore, error) {
 	compiled, err := server.LoadRoutes(cfg.Mock.Routes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load routes file %q: %w", cfg.Mock.Routes, err)
@@ -310,6 +322,9 @@ func buildRoutesStore(ctx context.Context, cmd *cobra.Command) (*server.RoutesSt
 		fmt.Fprintf(cmd.OutOrStdout(), format+"\n", args...)
 	}
 	store := server.NewRoutesStore(cfg.Mock.Routes, compiled, logf)
+
+	// Record hot reloads on the shared collector (nil when metrics are disabled).
+	store.SetMetricsRecorder(rec)
 
 	// Bake CLI overrides into the store's settings on every (re)load so CLI flags
 	// always win over the file and survive an edit to the watched settings block.

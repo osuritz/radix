@@ -876,7 +876,7 @@ func matchParamPath(segments []string, path string) (map[string]string, bool) {
 // identical data. When the route has conditions they are evaluated in order and
 // the first satisfied arm's response is served; selectResponse documents the
 // precedence (winning arm > default arm > top-level response > 404).
-func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params map[string]string, baseDir string) {
+func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params map[string]string, baseDir string, rec MockMetricsRecorder) {
 	// Per-route delay (fixed + jitter), honoring request cancellation.
 	if d := cr.delay + jitter(cr.delayJitter); d > 0 {
 		t := time.NewTimer(d)
@@ -902,7 +902,7 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 	// The template data is built once above (same as the normal path) so each
 	// event's data: template sees the request context.
 	if cr.isSSE {
-		cr.serveSSE(w, r, data)
+		cr.serveSSE(w, r, data, rec)
 		return
 	}
 
@@ -915,8 +915,16 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 
 	body, err := resp.renderBody(data, baseDir)
 	if err != nil {
+		if rec != nil {
+			rec.RecordMockTemplateError()
+		}
 		http.Error(w, fmt.Sprintf("mock: render response: %v", err), http.StatusInternalServerError)
 		return
+	}
+	// Count a template render only when the response actually rendered a template
+	// (inline body or file body); a static, template-free response is not a render.
+	if rec != nil && resp.hasTemplate() {
+		rec.RecordMockTemplateRender()
 	}
 
 	for k, v := range resp.headers {
@@ -924,6 +932,13 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 	}
 	w.WriteHeader(resp.status)
 	_, _ = w.Write(body)
+}
+
+// hasTemplate reports whether the response renders a template (an inline body
+// template or a file-backed body), as opposed to a static/empty response. Used
+// to count only genuine template renders in the per-command mock metrics.
+func (resp *compiledResponse) hasTemplate() bool {
+	return resp.bodyTmpl != nil || resp.filePath != ""
 }
 
 // serveSSE streams the route's scripted Server-Sent Events as a
@@ -939,7 +954,7 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 // after it is written so the client observes events incrementally. A write
 // error (client disconnected / broken pipe) also stops the stream immediately,
 // so a zero-delay/high-repeat script bails as soon as the peer goes away.
-func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data map[string]any) {
+func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data map[string]any, rec MockMetricsRecorder) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "mock: SSE requires a streaming (flushable) response writer", http.StatusInternalServerError)
@@ -968,11 +983,17 @@ func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data m
 
 			rendered, err := ev.render(data)
 			if err != nil {
+				if rec != nil {
+					rec.RecordMockTemplateError()
+				}
 				// Headers are already sent; surface the failure as an SSE comment
 				// rather than a (now-impossible) HTTP error status, then stop.
 				_, _ = io.WriteString(w, ": error rendering event: "+err.Error()+"\n\n")
 				flusher.Flush()
 				return
+			}
+			if rec != nil && ev.dataTmpl != nil {
+				rec.RecordMockTemplateRender()
 			}
 			if err := writeSSEEvent(w, ev.event, rendered); err != nil {
 				// Write failed (client disconnected / broken pipe): stop streaming

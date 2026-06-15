@@ -60,6 +60,25 @@ type MockConfig struct {
 	// FailStatus is the HTTP status code returned for randomly-injected
 	// failures. If zero, http.StatusInternalServerError (500) is used.
 	FailStatus int
+
+	// Metrics, when non-nil, records per-command mock counters (route matches,
+	// template renders/errors, fail injections, fallback hits). It is nil when
+	// metrics are disabled; MockMetricsRecorder methods are also nil-safe so
+	// recording is always side-effect-free w.r.t. the response.
+	Metrics MockMetricsRecorder
+}
+
+// MockMetricsRecorder records the mock command's per-command counters. It is
+// satisfied by *metrics.Collector; the server package depends on this narrow
+// interface rather than the metrics package so the handlers stay decoupled. All
+// methods must be safe to call on a nil receiver (the concrete collector's are).
+type MockMetricsRecorder interface {
+	RecordMockRouteMatch(custom bool)
+	RecordMockTemplateRender()
+	RecordMockTemplateError()
+	RecordMockReload()
+	RecordMockFailInjection()
+	RecordMockFallback(kind string)
 }
 
 // NewMockHandler returns an http.Handler exposing built-in httpbin-style
@@ -80,7 +99,29 @@ func NewMockHandler(cfg MockConfig) http.Handler {
 		registerBuiltins(mux, NormalizePrefix(cfg.Prefix))
 	}
 
-	return withLatencyAndFailures(mux, cfg)
+	// In the builtins-only handler, record a built-in route match whenever a
+	// request actually matches a registered endpoint (mux.Handler reports a
+	// non-empty pattern). The routed handler records matches in its own dispatch.
+	var handler http.Handler = mux
+	if cfg.Metrics != nil && cfg.Builtin {
+		handler = recordBuiltinMatches(mux, cfg.Metrics)
+	}
+
+	return withLatencyAndFailures(handler, cfg)
+}
+
+// recordBuiltinMatches wraps a built-ins ServeMux so a built-in route match is
+// recorded whenever the mux matches a registered endpoint for the request. It
+// uses mux.Handler to detect a match without serving twice: an empty returned
+// pattern means no built-in matched (the mux would serve its own 404), so no
+// match is recorded.
+func recordBuiltinMatches(mux *http.ServeMux, rec MockMetricsRecorder) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := mux.Handler(r); pattern != "" {
+			rec.RecordMockRouteMatch(false)
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // NormalizePrefix cleans a user-supplied prefix so it starts with "/" and does
@@ -128,6 +169,7 @@ func withLatencyAndFailures(next http.Handler, cfg MockConfig) http.Handler {
 			jitter:     cfg.LatencyJitter,
 			failRate:   cfg.FailRate,
 			failStatus: failStatus,
+			metrics:    cfg.Metrics,
 		}, next.ServeHTTP)
 	})
 }
@@ -140,11 +182,13 @@ type latencyFailSettings struct {
 	jitter     time.Duration
 	failRate   float64
 	failStatus int
+	metrics    MockMetricsRecorder // nil when metrics are disabled
 }
 
 // latencyFail adapts a RouteSettings value into latencyFailSettings, defaulting
-// failStatus to 500 when unset.
-func (rs RouteSettings) latencyFail() latencyFailSettings {
+// failStatus to 500 when unset. rec records the fail-rate injection; it is nil
+// when metrics are disabled.
+func (rs RouteSettings) latencyFail(rec MockMetricsRecorder) latencyFailSettings {
 	fs := rs.FailStatus
 	if fs == 0 {
 		fs = http.StatusInternalServerError
@@ -154,6 +198,7 @@ func (rs RouteSettings) latencyFail() latencyFailSettings {
 		jitter:     rs.LatencyJitter,
 		failRate:   rs.FailRate,
 		failStatus: fs,
+		metrics:    rec,
 	}
 }
 
@@ -166,6 +211,9 @@ func applyLatencyAndFailures(w http.ResponseWriter, r *http.Request, s latencyFa
 	// Random failure injection: with probability failRate/100 respond with
 	// failStatus immediately. mathrand.Float64 returns [0.0, 1.0).
 	if s.failRate > 0 && mathrand.Float64()*100 < s.failRate {
+		if s.metrics != nil {
+			s.metrics.RecordMockFailInjection()
+		}
 		w.WriteHeader(s.failStatus)
 		return
 	}

@@ -146,6 +146,21 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("backend TLS configuration error: %w", err)
 	}
 
+	// Set up metrics if enabled. The collector is shared with the admin server;
+	// the /_metrics endpoint is exposed there, not on the app mux. It is built
+	// before the proxy handler / auth middleware so they can record per-command
+	// proxy counters (streaming connections, auth-header injections).
+	var collector *metrics.Collector
+	if cfg.Metrics.Enabled {
+		collector = metrics.NewCollector("proxy", version.Version)
+	}
+	// proxyRec stays a nil interface when metrics are disabled (no typed-nil) so
+	// the proxy's stream recording is a true no-op.
+	var proxyRec server.ProxyMetricsRecorder
+	if collector != nil {
+		proxyRec = collector
+	}
+
 	// Build reverse proxy handler
 	proxyHandler := server.NewReverseProxy(server.ProxyConfig{
 		Target:        targetURL,
@@ -154,17 +169,11 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		Rewrite:       cfg.Proxy.Rewrite,
 		TLSConfig:     backendTLS,
 		FlushInterval: cfg.Proxy.FlushInterval,
+		Metrics:       proxyRec,
 	})
 
 	// Build handler chain using a mux
 	mux := http.NewServeMux()
-
-	// Set up metrics if enabled. The collector is shared with the admin server;
-	// the /_metrics endpoint is exposed there, not on the app mux.
-	var collector *metrics.Collector
-	if cfg.Metrics.Enabled {
-		collector = metrics.NewCollector("proxy", version.Version)
-	}
 
 	mux.Handle("/", proxyHandler)
 
@@ -190,6 +199,10 @@ func runProxy(cmd *cobra.Command, args []string) error {
 		if cfg.Verbose {
 			// Names-only summary; injected secret values are never logged.
 			injectOpts = append(injectOpts, middleware.WithVerboseLogging(os.Stdout))
+		}
+		if collector != nil {
+			// Count auth-header injections on the shared collector.
+			injectOpts = append(injectOpts, middleware.WithMetrics(collector))
 		}
 		finalHandler = middleware.InjectHeaders(provider, injectOpts...)(finalHandler)
 	}
