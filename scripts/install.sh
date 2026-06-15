@@ -43,8 +43,21 @@ detect_platform() {
 
   echo "${os}_${arch}"
 }
-resolve_version()    { die "not implemented"; }
-version_number()     { die "not implemented"; }
+# Fetches the latest release tag from the GitHub API, or uses $RADIX_VERSION if set.
+resolve_version() {
+  local tag="${RADIX_VERSION:-}"
+  if [ -z "$tag" ]; then
+    tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep '"tag_name"' \
+      | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    [ -n "$tag" ] || die "failed to fetch latest release tag from GitHub"
+  fi
+  echo "$tag"
+}
+
+# GoReleaser strips the leading 'v' from .Version in archive filenames.
+# e.g. tag v0.7.1 → filename prefix 0.7.1
+version_number() { echo "${1#v}"; }
 download_files()     { die "not implemented"; }
 verify_checksum()    { die "not implemented"; }
 extract_and_install(){ die "not implemented"; }
