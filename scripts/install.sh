@@ -76,7 +76,36 @@ download_files() {
   curl -fsSL --max-time 30 "${base}/checksums.txt" -o "${tmpdir}/checksums.txt" \
     || die "download failed: ${base}/checksums.txt"
 }
-verify_checksum()    { die "not implemented"; }
+# Verifies archive SHA256 against checksums.txt.
+# Asserts exactly one matching entry exists (zero or many are both errors).
+verify_checksum() {
+  local archive_path="$1" checksums_path="$2"
+  local filename
+  filename="$(basename "$archive_path")"
+
+  local match_count
+  match_count="$(grep -c "  ${filename}$" "$checksums_path" || echo 0)"
+  case "$match_count" in
+    0) die "checksum entry for ${filename} not found in checksums.txt" ;;
+    1) ;;
+    *) die "multiple checksum entries for ${filename} in checksums.txt" ;;
+  esac
+
+  local expected
+  expected="$(grep "  ${filename}$" "$checksums_path" | awk '{print $1}')"
+
+  local actual
+  if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$archive_path" | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$archive_path" | awk '{print $1}')"
+  else
+    die "no checksum tool found (need shasum or sha256sum)"
+  fi
+
+  [ "$actual" = "$expected" ] || die "checksum mismatch for ${filename}"
+  success "checksum verified"
+}
 extract_and_install(){ die "not implemented"; }
 setup_path()         { die "not implemented"; }
 
