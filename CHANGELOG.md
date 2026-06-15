@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-15
+
+### Fixed
+
+- **SSE mock routes through the middleware chain** — the logging/metrics/gzip
+  response-writer wrappers now pass through `Flush()`/`Unwrap()`, so `sse:` routes
+  stream correctly via the CLI instead of returning 500. (Previously only worked
+  in unit tests, where the handler was called with a flushable recorder directly.
+  This fix landed just after the v0.7.0 tag, so v0.7.0 still 500s on SSE.)
+
+### Documentation
+
+- **User-facing documentation site** — the VitePress site at
+  <https://osuritz.github.io/radix/> is now fully written: a page per command, a
+  configuration reference, and guides for mocking, TLS, observability, and
+  logging. (v0.6.0 shipped only the scaffold.)
+
 ## [0.7.0] - 2026-06-15
 
 ### Added
@@ -32,13 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all fail fast with a clear, route-scoped error. Implemented with the standard
   library only (`math/rand/v2` + `sync/atomic`). See the README mock section and
   `examples/mock-routes.yml`.
-
-### Fixed
-
-- **SSE mock routes through the middleware chain** — the logging/metrics/gzip
-  response-writer wrappers now pass through `Flush()`/`Unwrap()`, so `sse:` routes
-  stream correctly via the CLI instead of returning 500. (Previously only worked
-  in unit tests, where the handler was called with a flushable recorder directly.)
 
 ## [0.6.0] - 2026-06-15
 
@@ -331,7 +341,8 @@ shutdown.
 ### Note
 This is an alpha release to test the release workflow. Server commands (serve, proxy, echo, mock) are not yet implemented.
 
-[Unreleased]: https://github.com/osuritz/radix/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/osuritz/radix/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/osuritz/radix/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/osuritz/radix/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/osuritz/radix/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/osuritz/radix/compare/v0.4.0...v0.5.0
