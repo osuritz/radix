@@ -231,3 +231,46 @@ routes:
       - event: close
         delay: 500ms
         data: '{"status":"done"}'
+
+  # Sequenced responses: a `sequence:` block is a stateful cycle of responses.
+  # Successive requests advance through the list (each item is an inline response:
+  # status?/headers?/body?-or-file?, same shape as a normal response). It replaces
+  # response/conditions for the route. By default the sequence advances to the
+  # last item and then "sticks" on it for every subsequent request. Add a
+  # route-level `repeat: true` to loop back to the first item after the last.
+  # The selection index is per-route and resets on hot-reload.
+  #
+  # Try it with repeated calls: curl -X POST http://localhost:8080/api/poll
+  - path: /api/poll
+    method: POST
+    repeat: true            # loop the cycle; omit/false to stick on the last item
+    sequence:
+      - status: 202
+        body: '{"state":"pending","attempt":{{seq}}}'
+      - status: 202
+        body: '{"state":"running","attempt":{{seq}}}'
+      - status: 200
+        body: '{"state":"done","attempt":{{seq}}}'
+
+  # Weighted-random responses: a `random:` block picks one arm per request with
+  # probability weight/sum(weights). Each arm nests its response under `response:`
+  # and needs a positive integer `weight`. Useful for chaos testing a client
+  # against a mix of success/error responses. It replaces response/conditions for
+  # the route.
+  #
+  # Try it with repeated calls: curl http://localhost:8080/api/flaky
+  - path: /api/flaky
+    method: GET
+    random:
+      - weight: 70          # ~70% success
+        response:
+          status: 200
+          body: '{"result":"ok"}'
+      - weight: 20          # ~20% server error
+        response:
+          status: 500
+          body: '{"error":"random failure"}'
+      - weight: 10          # ~10% unavailable
+        response:
+          status: 503
+          body: '{"error":"service unavailable"}'

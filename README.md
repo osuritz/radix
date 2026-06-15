@@ -437,8 +437,56 @@ disconnects and ends the stream cleanly once the script is exhausted. Negative
 `delay`/`repeat_delay`/`repeat` and malformed `data` templates fail at load. Try
 it with `curl -N http://localhost:8080/api/stream/42`.
 
-> Not yet supported (ignored gracefully if present): stateful `sequence`,
-> weighted `random`, and `websocket`.
+**Sequenced responses** let a route return a different response on each
+successive request. Add a `sequence:` block — an ordered list of inline
+responses (each with the usual `status`/`headers`/`body`-or-`file` shape):
+
+```yaml
+routes:
+  - path: /api/poll
+    method: POST
+    repeat: true            # loop back to the first item after the last
+    sequence:
+      - { status: 202, body: '{"state":"pending"}' }
+      - { status: 202, body: '{"state":"running"}' }
+      - { status: 200, body: '{"state":"done"}' }
+```
+
+Each request advances one step through the list. With `repeat: true` the cycle
+loops back to the first item after the last; with `repeat` omitted/`false` (the
+default) the sequence advances to the last item and then **sticks on it** for
+every subsequent request. The selection index is private per route and resets to
+the start on hot-reload (a reload rebuilds the route). The `{{seq}}` template
+helper is a **separate** counter from the sequence position, so a body that
+renders `{{seq}}` more than once never skews which item is served. A `sequence:`
+block replaces `response`/`conditions` for the route (combining them is a load
+error), and an empty list fails at load.
+
+**Weighted-random responses** let a route pick one of several responses at
+random, weighted by a positive integer. Add a `random:` block of `{weight,
+response}` arms:
+
+```yaml
+routes:
+  - path: /api/flaky
+    method: GET
+    random:
+      - weight: 70          # ~70% success
+        response: { status: 200, body: '{"result":"ok"}' }
+      - weight: 20          # ~20% server error
+        response: { status: 500, body: '{"error":"random failure"}' }
+      - weight: 10          # ~10% unavailable
+        response: { status: 503, body: '{"error":"service unavailable"}' }
+```
+
+Each request selects an arm with probability `weight / sum(weights)` — handy for
+chaos-testing a client against a realistic mix of success and error responses.
+Each `weight` must be a positive integer (a non-positive weight, or an empty
+list, fails at load). Like `sequence`, a `random:` block replaces
+`response`/`conditions` for the route. `sequence`, `random`, and `sse` are
+mutually exclusive — a route may use at most one.
+
+> Not yet supported (ignored gracefully if present): `websocket`.
 
 ### All mock flags
 
