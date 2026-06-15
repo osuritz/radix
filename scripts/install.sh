@@ -22,7 +22,7 @@ die()     { printf 'error: %s\n' "$*" >&2; exit 1; }
 info()    { printf '  %s\n' "$*"; }
 success() { printf 'ok: %s\n' "$*"; }
 
-# ── stubs (replaced in later tasks) ──────────────────────────────────────────
+# ── helpers ──────────────────────────────────────────────────────────────────
 
 detect_platform() {
   local os arch
@@ -162,10 +162,10 @@ setup_path() {
       fi ;;
   esac
 
-  # Single-quoted heredoc: $HOME expands at shell startup, not at install time
-  cat >> "$shell_file" << 'RADIX_PATH'
+  # Escaped heredoc: $HOME and $PATH expand when the user's shell sources this file
+  cat >> "$shell_file" << RADIX_PATH
 
-export PATH='$HOME/.radix/bin':$PATH  # added by radix installer
+export PATH="\$HOME/.radix/bin:\$PATH"  # added by radix installer
 RADIX_PATH
 
   info "Added ~/.radix/bin to PATH in ${shell_file}"
