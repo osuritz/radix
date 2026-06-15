@@ -130,6 +130,37 @@ bash scripts/smoke.sh
 Run it before opening a PR that touches command behavior. It needs `curl` and a
 free port range starting at 18080.
 
+### Building the Web UI
+
+`radix` embeds a metrics dashboard — a Vite + React + TypeScript single-page app
+under `ui/` — into the binary via a `//go:embed` directive (see `assets.go`). It
+compiles to `ui/dist`; building it requires Node (CI uses Node 22) and is a
+frontend-only toolchain, not a Go dependency.
+
+```bash
+make ui   # runs `npm ci && npm run build` in ui/, producing ui/dist
+```
+
+`make build` depends on `make ui`, so a normal build embeds the real dashboard.
+When npm or `ui/` is unavailable the UI build is skipped gracefully: a committed
+`ui/dist/.gitkeep` placeholder satisfies the embed, so a Node-less `go build
+./...` still compiles — the binary then serves a "run `make ui`" page in place of
+the dashboard.
+
+For a fast UI-only dev loop, run Vite directly against a separately running
+radix (e.g. `radix mock`) so the dashboard has live data:
+
+```bash
+cd ui && npm run dev   # Vite on :5173, proxies /_metrics to :9090
+```
+
+Frontend tests use [Vitest](https://vitest.dev/) and also run in the CI **UI
+Tests** job:
+
+```bash
+cd ui && npm test
+```
+
 ### Code Quality
 
 Before submitting a PR:
