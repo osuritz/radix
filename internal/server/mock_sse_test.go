@@ -1,0 +1,382 @@
+package server
+
+import (
+	"bufio"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// sseFront builds a routed handler from yamlSrc and starts a real httptest
+// server for it. A real server (not httptest.NewRecorder) is required to observe
+// streaming/flush behavior, since the recorder buffers and is not an
+// http.Flusher.
+func sseFront(t *testing.T, yamlSrc string) *httptest.Server {
+	t.Helper()
+	store := newStore(t, yamlSrc, t.TempDir())
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store})
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// readSSEEvent reads one SSE event (lines up to and including the blank-line
+// terminator) from r, returning the raw block without the terminating blank
+// line. It fails the test on a read error or timeout via the caller's deadline.
+func readSSEEvent(t *testing.T, r *bufio.Reader) string {
+	t.Helper()
+	var b strings.Builder
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading SSE event: %v", err)
+		}
+		if line == "\n" { // blank line terminates the event
+			return b.String()
+		}
+		b.WriteString(line)
+	}
+}
+
+// TestSSE_IncrementalDelivery proves scripted events arrive over time, not all
+// at once after the handler returns. It mirrors the proxy incremental-flush
+// test: each event carries a delay, and the client must observe event N before
+// event N+1's delay has elapsed.
+func TestSSE_IncrementalDelivery(t *testing.T) {
+	const src = `
+routes:
+  - path: /events
+    sse:
+      - data: first
+        delay: 50ms
+      - data: second
+        delay: 150ms
+`
+	srv := sseFront(t, src)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(srv.URL + "/events")
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+
+	br := bufio.NewReader(resp.Body)
+
+	start := time.Now()
+	got1 := readSSEEvent(t, br)
+	elapsed1 := time.Since(start)
+	if !strings.Contains(got1, "data: first") {
+		t.Errorf("event 1 = %q, want a data: first line", got1)
+	}
+	// The first event waits ~50ms; it must arrive well before the second's
+	// cumulative delay (~200ms), proving it is not buffered.
+	if elapsed1 > 150*time.Millisecond {
+		t.Errorf("event 1 took %v; appears buffered, not streamed", elapsed1)
+	}
+
+	got2 := readSSEEvent(t, br)
+	elapsed2 := time.Since(start)
+	if !strings.Contains(got2, "data: second") {
+		t.Errorf("event 2 = %q, want a data: second line", got2)
+	}
+	// The second event waits an additional ~150ms after the first.
+	if elapsed2 < 150*time.Millisecond {
+		t.Errorf("event 2 arrived after %v; expected it to wait for its delay", elapsed2)
+	}
+}
+
+// TestSSE_EventName verifies an event name renders as an `event:` line ahead of
+// the data line(s).
+func TestSSE_EventName(t *testing.T) {
+	const src = `
+routes:
+  - path: /named
+    sse:
+      - event: ping
+        data: pong
+`
+	srv := sseFront(t, src)
+	resp, err := http.Get(srv.URL + "/named")
+	if err != nil {
+		t.Fatalf("GET /named: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	got := readSSEEvent(t, br)
+	if !strings.Contains(got, "event: ping\n") {
+		t.Errorf("event block = %q, want an event: ping line", got)
+	}
+	if !strings.Contains(got, "data: pong\n") {
+		t.Errorf("event block = %q, want a data: pong line", got)
+	}
+}
+
+// TestSSE_Repeat verifies repeat sends the event the requested number of times
+// and repeat_delay spaces the repeats apart.
+func TestSSE_Repeat(t *testing.T) {
+	const src = `
+routes:
+  - path: /tick
+    sse:
+      - data: tick
+        repeat: 3
+        repeat_delay: 60ms
+`
+	srv := sseFront(t, src)
+	resp, err := http.Get(srv.URL + "/tick")
+	if err != nil {
+		t.Fatalf("GET /tick: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		got := readSSEEvent(t, br)
+		if !strings.Contains(got, "data: tick") {
+			t.Fatalf("repeat %d = %q, want data: tick", i, got)
+		}
+	}
+	// Two repeat_delays (~120ms) separate the three sends.
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("3 repeats took %v; expected repeat_delay spacing", elapsed)
+	}
+
+	// No further events: the next read should hit EOF (the stream ends).
+	if _, err := br.ReadString('\n'); err == nil {
+		t.Errorf("expected stream to end after 3 events, got more data")
+	}
+}
+
+// TestSSE_TemplatedData proves a data: template renders against the shared
+// request-data context (e.g. a path param).
+func TestSSE_TemplatedData(t *testing.T) {
+	const src = `
+routes:
+  - path: /items/:id
+    sse:
+      - data: 'item={{.params.id}}'
+`
+	srv := sseFront(t, src)
+	resp, err := http.Get(srv.URL + "/items/42")
+	if err != nil {
+		t.Fatalf("GET /items/42: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	got := readSSEEvent(t, br)
+	if !strings.Contains(got, "data: item=42\n") {
+		t.Errorf("event block = %q, want data: item=42", got)
+	}
+}
+
+// TestSSE_MultiLineData proves multi-line rendered data is split into one data:
+// field per line on the wire.
+func TestSSE_MultiLineData(t *testing.T) {
+	const src = `
+routes:
+  - path: /multi
+    sse:
+      - data: "line one\nline two"
+`
+	srv := sseFront(t, src)
+	resp, err := http.Get(srv.URL + "/multi")
+	if err != nil {
+		t.Fatalf("GET /multi: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	got := readSSEEvent(t, br)
+	if !strings.Contains(got, "data: line one\n") {
+		t.Errorf("event block = %q, want a data: line one line", got)
+	}
+	if !strings.Contains(got, "data: line two\n") {
+		t.Errorf("event block = %q, want a data: line two line", got)
+	}
+}
+
+// TestSSE_ClientCancel proves the handler returns promptly when the client
+// cancels the request mid-stream (between scripted events). Without honoring the
+// context, the handler would block on the long inter-event delay.
+func TestSSE_ClientCancel(t *testing.T) {
+	const src = `
+routes:
+  - path: /cancel
+    sse:
+      - data: first
+      - data: second
+        delay: 30s
+`
+	srv := sseFront(t, src)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/cancel", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /cancel: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	// Read the first event, then cancel before the (30s) second event.
+	if got := readSSEEvent(t, br); !strings.Contains(got, "data: first") {
+		t.Fatalf("first event = %q, want data: first", got)
+	}
+
+	cancel()
+
+	// The body should close promptly (well under the 30s scripted delay).
+	done := make(chan struct{})
+	go func() {
+		_, _ = br.ReadString('\n') // returns once the canceled stream closes
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not return promptly after client cancel")
+	}
+}
+
+// TestSSE_EndOfScriptCloses proves the stream ends cleanly once the script is
+// exhausted (the response body reaches EOF).
+func TestSSE_EndOfScriptCloses(t *testing.T) {
+	const src = `
+routes:
+  - path: /done
+    sse:
+      - data: only
+`
+	srv := sseFront(t, src)
+	resp, err := http.Get(srv.URL + "/done")
+	if err != nil {
+		t.Fatalf("GET /done: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	if got := readSSEEvent(t, br); !strings.Contains(got, "data: only") {
+		t.Fatalf("event = %q, want data: only", got)
+	}
+	if _, err := br.ReadString('\n'); err == nil {
+		t.Errorf("expected EOF after the single scripted event")
+	}
+}
+
+// nonFlushWriter is an http.ResponseWriter that deliberately does NOT implement
+// http.Flusher, used to exercise the SSE handler's flusher-required guard.
+// (httptest.ResponseRecorder cannot be used here: it implements http.Flusher.)
+type nonFlushWriter struct {
+	header http.Header
+	status int
+}
+
+func (w *nonFlushWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+func (w *nonFlushWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *nonFlushWriter) WriteHeader(status int)      { w.status = status }
+
+// TestSSE_RequiresFlusher proves an SSE route returns 500 when the response
+// writer cannot stream (does not implement http.Flusher).
+func TestSSE_RequiresFlusher(t *testing.T) {
+	const src = `
+routes:
+  - path: /events
+    sse:
+      - data: hello
+`
+	store := newStore(t, src, t.TempDir())
+	h := NewRoutedHandler(RoutedHandlerConfig{Store: store})
+	w := &nonFlushWriter{}
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/events", nil))
+	if w.status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for a non-flushable writer", w.status)
+	}
+}
+
+// TestSSE_CompileErrors verifies malformed SSE config fails at compile time with
+// a clear error.
+func TestSSE_CompileErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "negative repeat",
+			src: `
+routes:
+  - path: /x
+    sse:
+      - data: a
+        repeat: -1
+`,
+			want: "repeat must not be negative",
+		},
+		{
+			name: "negative delay",
+			src: `
+routes:
+  - path: /x
+    sse:
+      - data: a
+        delay: -1s
+`,
+			want: "delay and repeat_delay must not be negative",
+		},
+		{
+			name: "negative repeat_delay",
+			src: `
+routes:
+  - path: /x
+    sse:
+      - data: a
+        repeat_delay: -2s
+`,
+			want: "delay and repeat_delay must not be negative",
+		},
+		{
+			name: "bad data template",
+			src: `
+routes:
+  - path: /x
+    sse:
+      - data: '{{ .params.id'
+`,
+			want: "parse template",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := CompileRoutes([]byte(tt.src), t.TempDir())
+			if err == nil {
+				t.Fatalf("expected a compile error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.want)
+			}
+		})
+	}
+}

@@ -405,8 +405,38 @@ for an unconditional arm). Bad match-key prefixes, empty-match non-default arms,
 and malformed **inline** templates all fail at load; `file:` arm bodies follow
 the per-request validation described above.
 
+**Server-Sent Events (SSE)** let a route stream a `text/event-stream` response
+of scripted events instead of a single body. Add an `sse:` block (it replaces
+`response`/`conditions` for the route):
+
+```yaml
+routes:
+  - path: /api/stream/:id
+    method: GET
+    sse:
+      - event: open                       # optional SSE event name
+        data: '{"id":"{{.params.id}}"}'   # templated, same data/funcs as a body
+      - data: '{"seq":{{seq}},"ts":"{{now}}"}'
+        repeat: 5                          # send 5 times in total (default 1)
+        repeat_delay: 1s                   # wait between repeats
+      - event: close
+        delay: 500ms                       # wait before this event
+        data: '{"status":"done"}'
+```
+
+Each event accepts `delay` (wait before sending — Go duration or seconds),
+`event` (optional event name), `data` (the templated payload), `repeat` (total
+sends, default `1`), and `repeat_delay` (spacing between repeats). The response
+sets `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and
+`Connection: keep-alive`, and is **flushed after each event** so clients receive
+them incrementally. Multi-line rendered `data` becomes multiple `data:` lines on
+the wire (per the SSE spec). The handler returns promptly when the client
+disconnects and ends the stream cleanly once the script is exhausted. Negative
+`delay`/`repeat_delay`/`repeat` and malformed `data` templates fail at load. Try
+it with `curl -N http://localhost:8080/api/stream/42`.
+
 > Not yet supported (ignored gracefully if present): stateful `sequence`,
-> weighted `random`, `websocket`, and `sse`.
+> weighted `random`, and `websocket`.
 
 ### All mock flags
 

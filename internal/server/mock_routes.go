@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"  //nolint:gosec // md5 is offered only for non-security mock fixture generation, never for auth/integrity.
 	"crypto/sha1" //nolint:gosec // sha1 is offered only for non-security mock fixture generation, never for auth/integrity.
 	"crypto/sha256"
@@ -89,13 +90,14 @@ const (
 
 // RoutesFile is the on-disk YAML schema for a mock routes configuration. The
 // modeled feature set is: settings, exact/param/regex/glob routes, inline or
-// file-backed templated response bodies, per-route delay, and conditional
-// responses (the `conditions:` block).
+// file-backed templated response bodies, per-route delay, conditional responses
+// (the `conditions:` block), and scripted Server-Sent Events (the `sse:` block,
+// which streams a text/event-stream response).
 //
-// The remaining advanced keys from the design doc (sequence, random, websocket,
-// sse) are intentionally NOT modeled and are ignored gracefully when present:
-// they unmarshal into nothing and have no effect. See the package docs / the
-// mock command help for the supported subset.
+// The remaining advanced keys from the design doc (sequence, random, websocket)
+// are intentionally NOT modeled and are ignored gracefully when present: they
+// unmarshal into nothing and have no effect. See the package docs / the mock
+// command help for the supported subset.
 type RoutesFile struct {
 	Settings settingsYAML   `yaml:"settings"`
 	Routes   []RouteDefYAML `yaml:"routes"`
@@ -150,6 +152,11 @@ type FallbackConfig struct {
 //   - A route with conditions uses the top-level response as a no-match fallback
 //     ONLY when one was explicitly provided (non-nil); otherwise a no-match is a
 //     404.
+//
+// SSE, when non-empty, makes the route a Server-Sent Events endpoint: instead of
+// a single buffered response the route streams the scripted events as a
+// text/event-stream. An SSE route ignores Response/Conditions (the streamed
+// events are the response).
 type RouteDefYAML struct {
 	Path        string          `yaml:"path"`
 	Method      string          `yaml:"method"`
@@ -158,6 +165,21 @@ type RouteDefYAML struct {
 	DelayJitter yamlDuration    `yaml:"delay_jitter"`
 	Response    *ResponseYAML   `yaml:"response"`
 	Conditions  []ConditionYAML `yaml:"conditions"`
+	SSE         []SSEEventYAML  `yaml:"sse"`
+}
+
+// SSEEventYAML is one scripted Server-Sent Event in a route's `sse:` block.
+// Delay waits before the event is sent (honoring client cancellation); Event is
+// the optional SSE event name; Data is the templated event payload (rendered
+// with the same request-data context and FuncMap as a response body). Repeat
+// sends the event that many times in total (default/absent = 1), with
+// RepeatDelay waited between successive repeats.
+type SSEEventYAML struct {
+	Delay       yamlDuration `yaml:"delay"`
+	Event       string       `yaml:"event"`
+	Data        string       `yaml:"data"`
+	Repeat      int          `yaml:"repeat"`
+	RepeatDelay yamlDuration `yaml:"repeat_delay"`
 }
 
 // ConditionYAML is one arm of a route's `conditions:` block. An arm either
@@ -238,6 +260,19 @@ type compiledResponse struct {
 	seq      *atomic.Uint64     // owning route's {{seq}} counter, threaded to per-request file templates
 }
 
+// compiledSSEEvent is the precompiled, request-time form of an SSEEventYAML: a
+// pre-delay, an optional event name, a parsed data template, and a repeat
+// count/spacing. Its template is parsed at load time (sharing the owning route's
+// {{seq}} counter), so it is immutable after compilation and safe for concurrent
+// reads.
+type compiledSSEEvent struct {
+	delay       time.Duration
+	event       string
+	dataTmpl    *template.Template // parsed data template (nil when data is empty)
+	repeat      int                // number of times to send the event (>= 1)
+	repeatDelay time.Duration      // delay between successive repeats
+}
+
 // compiledCondition is the precompiled form of a ConditionYAML: a set of match
 // rules (empty when the arm is the unconditional default) and the response to
 // serve when the arm wins.
@@ -295,6 +330,11 @@ type compiledRoute struct {
 	// conditions, when non-empty, select the response by request content;
 	// evaluated in order, first satisfied arm wins. See compiledRoute.serve.
 	conditions []compiledCondition
+
+	// isSSE marks the route as a Server-Sent Events endpoint: serve branches to
+	// serveSSE and streams sseEvents instead of writing a single response.
+	isSSE     bool
+	sseEvents []compiledSSEEvent
 
 	// seq is this route's private monotonic counter, backing the {{seq}} template
 	// helper. It is allocated fresh per compileRoute call and shared by every
@@ -489,6 +529,19 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 		cr.kind = routeExact
 	}
 
+	// An `sse:` block makes the route a streaming Server-Sent Events endpoint.
+	// The streamed events are the response, so an SSE route ignores
+	// response/conditions and returns early once its events are compiled.
+	if len(rd.SSE) > 0 {
+		events, sErr := compileSSEEvents(rd.SSE, cr.seq)
+		if sErr != nil {
+			return compiledRoute{}, sErr
+		}
+		cr.isSSE = true
+		cr.sseEvents = events
+		return cr, nil
+	}
+
 	// hasResp records whether an explicit top-level `response:` was provided
 	// (pointer non-nil). It governs the no-match fallback for conditional routes:
 	// only an explicit response is used as a fallback; absent → 404.
@@ -579,6 +632,47 @@ func compileConditions(conds []ConditionYAML, seq *atomic.Uint64) ([]compiledCon
 			cc.rules = rules
 		}
 		out = append(out, cc)
+	}
+	return out, nil
+}
+
+// compileSSEEvents parses a route's `sse:` block into request-time form. Each
+// event's data template is parsed at load time (sharing the route's {{seq}}
+// counter) so a malformed template fails fast; negative delays/repeat_delay and
+// a negative repeat are load-time errors. An absent/zero repeat is normalized to
+// 1 (send the event once). seq is the owning route's counter, shared by every
+// event's data template so all of a route's templates draw from one sequence.
+func compileSSEEvents(events []SSEEventYAML, seq *atomic.Uint64) ([]compiledSSEEvent, error) {
+	out := make([]compiledSSEEvent, 0, len(events))
+	for i := range events {
+		e := &events[i]
+		delay := e.Delay.Duration()
+		repeatDelay := e.RepeatDelay.Duration()
+		if delay < 0 || repeatDelay < 0 {
+			return nil, fmt.Errorf("sse event #%d: delay and repeat_delay must not be negative", i+1)
+		}
+		if e.Repeat < 0 {
+			return nil, fmt.Errorf("sse event #%d: repeat must not be negative", i+1)
+		}
+		repeat := e.Repeat
+		if repeat == 0 {
+			repeat = 1
+		}
+
+		ce := compiledSSEEvent{
+			delay:       delay,
+			event:       strings.TrimSpace(e.Event),
+			repeat:      repeat,
+			repeatDelay: repeatDelay,
+		}
+		if e.Data != "" {
+			tmpl, err := parseRouteTemplate("sse", e.Data, seq)
+			if err != nil {
+				return nil, fmt.Errorf("sse event #%d: %w", i+1, err)
+			}
+			ce.dataTmpl = tmpl
+		}
+		out = append(out, ce)
 	}
 	return out, nil
 }
@@ -795,6 +889,14 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 		return
 	}
 
+	// An SSE route streams its scripted events instead of writing one response.
+	// The template data is built once above (same as the normal path) so each
+	// event's data: template sees the request context.
+	if cr.isSSE {
+		cr.serveSSE(w, r, data)
+		return
+	}
+
 	resp, ok := cr.selectResponse(data)
 	if !ok {
 		// Route had conditions but no arm matched and no top-level fallback.
@@ -813,6 +915,104 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 	}
 	w.WriteHeader(resp.status)
 	_, _ = w.Write(body)
+}
+
+// serveSSE streams the route's scripted Server-Sent Events as a
+// text/event-stream. data is the shared request-data context built once by serve
+// so each event's data: template sees the request (method/path/params/query/
+// headers/body).
+//
+// The streaming response requires an http.Flusher; if the ResponseWriter does
+// not support flushing (e.g. an httptest.NewRecorder), a 500 is returned before
+// any stream bytes are written. Each event honors its delay (and repeat_delay
+// between repeats) via a timer that also selects on the request context, so the
+// handler returns promptly when the client disconnects. Every event is flushed
+// after it is written so the client observes events incrementally.
+func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "mock: SSE requires a streaming (flushable) response writer", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ctx := r.Context()
+	for i := range cr.sseEvents {
+		ev := &cr.sseEvents[i]
+		for n := 0; n < ev.repeat; n++ {
+			// Pre-event delay (ev.delay) for the first send; ev.repeatDelay
+			// between successive repeats. Both honor client cancellation.
+			wait := ev.delay
+			if n > 0 {
+				wait = ev.repeatDelay
+			}
+			if !sleepCtx(ctx, wait) {
+				return
+			}
+
+			rendered, err := ev.render(data)
+			if err != nil {
+				// Headers are already sent; surface the failure as an SSE comment
+				// rather than a (now-impossible) HTTP error status, then stop.
+				_, _ = io.WriteString(w, ": error rendering event: "+err.Error()+"\n\n")
+				flusher.Flush()
+				return
+			}
+			writeSSEEvent(w, ev.event, rendered)
+			flusher.Flush()
+		}
+	}
+}
+
+// render executes the event's data template against the shared request data,
+// returning the rendered payload (empty when the event has no data template).
+func (ev *compiledSSEEvent) render(data map[string]any) (string, error) {
+	if ev.dataTmpl == nil {
+		return "", nil
+	}
+	out, err := execTemplate(ev.dataTmpl, data)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// writeSSEEvent writes one event in SSE wire format: an optional `event: <name>`
+// line, one `data: <line>` line per line of the rendered payload (so multi-line
+// data becomes multiple data: fields), and a blank line terminating the event.
+func writeSSEEvent(w io.Writer, event, data string) {
+	if event != "" {
+		_, _ = io.WriteString(w, "event: "+event+"\n")
+	}
+	// Split on "\n" so multi-line rendered data emits one data: field per line,
+	// matching the SSE spec (the client rejoins them with newlines). A trailing
+	// newline yields a final empty data: line, which is benign.
+	for _, line := range strings.Split(data, "\n") {
+		_, _ = io.WriteString(w, "data: "+line+"\n")
+	}
+	_, _ = io.WriteString(w, "\n")
+}
+
+// sleepCtx waits for d, returning false if the context is canceled first (and
+// true when the full duration elapsed or d <= 0). It mirrors the per-route delay
+// select used at the top of serve.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // selectResponse chooses the response to serve for the given request data.
