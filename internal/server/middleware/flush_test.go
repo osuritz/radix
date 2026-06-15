@@ -98,10 +98,11 @@ func TestWrappersUnwrap(t *testing.T) {
 }
 
 // TestSSEThroughMiddlewareChain exercises a streaming (Flusher-dependent)
-// handler through the real Logging + Metrics middleware chain — the exact setup
-// the `mock` command uses. Before the Flush/Unwrap passthrough fix, the handler's
-// w.(http.Flusher) assertion failed (the outer wrapper shadowed the underlying
-// Flusher) and it returned 500 instead of a stream.
+// handler through the real middleware chain the `mock` command builds: Metrics
+// wraps Logging wraps the handler (mock.go applies Logging first, then Metrics,
+// making Metrics the outer wrapper). Before the Flush/Unwrap passthrough fix,
+// the handler's w.(http.Flusher) assertion failed (the outer wrapper shadowed
+// the underlying Flusher) and it returned 500 instead of a stream.
 func TestSSEThroughMiddlewareChain(t *testing.T) {
 	// A handler that requires an http.Flusher to stream a text/event-stream,
 	// mirroring server.serveSSE.
@@ -119,9 +120,10 @@ func TestSSEThroughMiddlewareChain(t *testing.T) {
 	})
 
 	collector := metrics.NewCollector("test", "1.0.0")
-	// Wrap exactly as the mock command does: Logging (outer) then Metrics.
-	handler := Logging(LoggingConfig{Format: LogFormatDev, Output: io.Discard})(
-		Metrics(collector)(stream),
+	// Wrap exactly as the mock command does: Metrics (outer) wraps Logging
+	// (inner) wraps the handler.
+	handler := Metrics(collector)(
+		Logging(LoggingConfig{Format: LogFormatDev, Output: io.Discard})(stream),
 	)
 
 	srv := httptest.NewServer(handler)

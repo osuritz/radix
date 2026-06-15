@@ -31,7 +31,14 @@ func (mrw *metricsResponseWriter) Write(b []byte) (int, error) {
 // Flush forwards to the underlying ResponseWriter's Flush when it supports
 // http.Flusher, keeping the wrapper transparent to streaming handlers (e.g. the
 // SSE mock route). It is a no-op when the underlying writer is not flushable.
+//
+// A flush triggers an implicit HTTP 200 to the client if no header was written
+// yet, so default the recorded status to 200 first — mirroring Write — so a
+// flush-first response is recorded as 200 rather than 0.
 func (mrw *metricsResponseWriter) Flush() {
+	if mrw.status == 0 {
+		mrw.status = http.StatusOK
+	}
 	if f, ok := mrw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
