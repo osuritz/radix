@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import {
   AreaChart,
   Area,
@@ -22,11 +23,28 @@ function formatTime(t: number): string {
 }
 
 export function RequestRateChart({ history }: RequestRateChartProps) {
-  const data = history.map((p) => ({
-    time: formatTime(p.t),
-    rate: +p.ratePerSecond.toFixed(2),
-    errors: p.errors,
-  }))
+  // Unique IDs per instance so SVG gradient ids don't collide if mounted twice.
+  const uid = useId()
+  const rateGradId = `rateGrad-${uid}`
+  const errGradId = `errGrad-${uid}`
+
+  // Derive per-second error RATE from consecutive history samples.
+  // Cumulative counter resets (e.g. server restart) are clamped to 0.
+  const data = history.map((p, i) => {
+    let errPerSec = 0
+    if (i > 0) {
+      const prev = history[i - 1]
+      const dtMs = p.t - prev.t
+      if (dtMs > 0) {
+        errPerSec = Math.max(0, (p.errors - prev.errors) / (dtMs / 1000))
+      }
+    }
+    return {
+      time: formatTime(p.t),
+      rate: +p.ratePerSecond.toFixed(2),
+      errorsPerSec: +errPerSec.toFixed(2),
+    }
+  })
 
   return (
     <div
@@ -44,13 +62,15 @@ export function RequestRateChart({ history }: RequestRateChartProps) {
         <ResponsiveContainer width="100%" height={200}>
           <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
             <defs>
-              <linearGradient id="rateGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--ctp-blue)" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="var(--ctp-blue)" stopOpacity={0} />
+              {/* Use style={{ stopColor }} instead of stopColor="var()" so Firefox
+                  and Safari<15.4 resolve the CSS variable in SVG presentation context. */}
+              <linearGradient id={rateGradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" style={{ stopColor: 'var(--ctp-blue)' }} stopOpacity={0.35} />
+                <stop offset="95%" style={{ stopColor: 'var(--ctp-blue)' }} stopOpacity={0} />
               </linearGradient>
-              <linearGradient id="errGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--ctp-red)" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="var(--ctp-red)" stopOpacity={0} />
+              <linearGradient id={errGradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" style={{ stopColor: 'var(--ctp-red)' }} stopOpacity={0.3} />
+                <stop offset="95%" style={{ stopColor: 'var(--ctp-red)' }} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--ctp-border)" strokeOpacity={0.5} />
@@ -83,17 +103,17 @@ export function RequestRateChart({ history }: RequestRateChartProps) {
               name="req/s"
               stroke="var(--ctp-blue)"
               strokeWidth={2}
-              fill="url(#rateGrad)"
+              fill={`url(#${rateGradId})`}
               dot={false}
               activeDot={{ r: 4, fill: 'var(--ctp-blue)' }}
             />
             <Area
               type="monotone"
-              dataKey="errors"
-              name="errors"
+              dataKey="errorsPerSec"
+              name="errors/s"
               stroke="var(--ctp-red)"
               strokeWidth={1.5}
-              fill="url(#errGrad)"
+              fill={`url(#${errGradId})`}
               dot={false}
               activeDot={{ r: 3, fill: 'var(--ctp-red)' }}
             />

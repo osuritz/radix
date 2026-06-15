@@ -1,13 +1,8 @@
 import type { ResponseTimesMetrics } from '@/types/metrics'
+import { formatMs } from '@/utils/format'
 
 interface LatencyPanelProps {
   responseTimes: ResponseTimesMetrics;
-}
-
-function fmt(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
-  if (ms < 1) return `${(ms * 1000).toFixed(0)}µs`
-  return `${ms.toFixed(1)}ms`
 }
 
 /** Map a ms value to a health color: green → yellow → red */
@@ -52,7 +47,7 @@ export function LatencyPanel({ responseTimes }: LatencyPanelProps) {
       <div>
         <div className="flex justify-between mb-1">
           <span style={{ color: 'var(--ctp-subtext)' }} className="text-xs">p95</span>
-          <span style={{ color: gaugeColor }} className="text-xs font-semibold tabular-nums">{fmt(p95_ms)}</span>
+          <span style={{ color: gaugeColor }} className="text-xs font-semibold tabular-nums">{formatMs(p95_ms)}</span>
         </div>
         <div
           style={{ backgroundColor: 'var(--ctp-base)', borderRadius: 4 }}
@@ -76,16 +71,16 @@ export function LatencyPanel({ responseTimes }: LatencyPanelProps) {
 
       {/* Stat rows */}
       <div className="flex flex-col gap-1.5 mt-1">
-        <StatRow label="p50" value={fmt(p50_ms)} color={latencyColor(p50_ms)} />
-        <StatRow label="p95" value={fmt(p95_ms)} color={latencyColor(p95_ms)} />
-        <StatRow label="p99" value={fmt(p99_ms)} color={latencyColor(p99_ms)} />
+        <StatRow label="p50" value={formatMs(p50_ms)} color={latencyColor(p50_ms)} />
+        <StatRow label="p95" value={formatMs(p95_ms)} color={latencyColor(p95_ms)} />
+        <StatRow label="p99" value={formatMs(p99_ms)} color={latencyColor(p99_ms)} />
         <div
           style={{ borderTopColor: 'var(--ctp-border)' }}
           className="border-t my-1"
         />
-        <StatRow label="avg" value={fmt(avg_ms)} color="var(--ctp-text)" />
-        <StatRow label="min" value={fmt(min_ms)} color="var(--ctp-green)" />
-        <StatRow label="max" value={fmt(max_ms)} color="var(--ctp-red)" />
+        <StatRow label="avg" value={formatMs(avg_ms)} color="var(--ctp-text)" />
+        <StatRow label="min" value={formatMs(min_ms)} color="var(--ctp-green)" />
+        <StatRow label="max" value={formatMs(max_ms)} color="var(--ctp-red)" />
       </div>
     </div>
   )

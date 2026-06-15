@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { MetricsSnapshot } from '@/types/metrics'
 
 /** Poll interval in milliseconds */
@@ -29,31 +29,39 @@ export function useMetrics(): UseMetricsResult {
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState(false)
 
-  // Ring buffer stored in a ref to avoid stale closures
-  const ringRef = useRef<HistoryPoint[]>([])
-
   const fetchMetrics = useCallback(async (signal: AbortSignal) => {
     try {
-      const res = await fetch('/_metrics', { signal })
+      const res = await fetch('/_metrics', {
+        signal,
+        headers: { Accept: 'application/json' },
+      })
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+
+      // Guard: Prometheus mode returns text/plain and JSON.parse throws an
+      // opaque SyntaxError. Detect and surface a clear message instead.
+      const ct = res.headers.get('content-type') ?? ''
+      if (!ct.includes('application/json')) {
+        setError(
+          `This dashboard needs JSON metrics (set metrics.format: json). Server returned: ${ct || '(no content-type)'}.`
+        )
+        setLive(false)
+        return
+      }
+
       const data = (await res.json()) as MetricsSnapshot
 
       setSnapshot(data)
       setError(null)
       setLive(true)
 
-      // Append to ring buffer
+      // Append to ring buffer via functional updater — no duplicate state/ref.
       const point: HistoryPoint = {
         t: Date.now(),
         ratePerSecond: data.requests.rate_per_second,
         total: data.requests.total,
         errors: data.requests.errors,
       }
-      ringRef.current = [
-        ...ringRef.current.slice(-(RING_BUFFER_SIZE - 1)),
-        point,
-      ]
-      setHistory([...ringRef.current])
+      setHistory((prev) => [...prev.slice(-(RING_BUFFER_SIZE - 1)), point])
     } catch (err) {
       if ((err as Error).name === 'AbortError') return
       const msg = err instanceof Error ? err.message : String(err)

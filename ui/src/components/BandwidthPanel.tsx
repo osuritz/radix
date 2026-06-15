@@ -1,15 +1,8 @@
 import type { BandwidthMetrics } from '@/types/metrics'
+import { humanBytes } from '@/utils/format'
 
 interface BandwidthPanelProps {
   bandwidth: BandwidthMetrics;
-}
-
-function humanBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  const val = bytes / Math.pow(1024, i)
-  return `${val < 10 ? val.toFixed(2) : val < 100 ? val.toFixed(1) : val.toFixed(0)} ${units[i] ?? 'B'}`
 }
 
 interface BwRowProps {
@@ -31,8 +24,6 @@ export function BandwidthPanel({ bandwidth }: BandwidthPanelProps) {
   const { bytes_sent, bytes_received, avg_request_size_bytes, avg_response_size_bytes } = bandwidth
 
   const total = bytes_sent + bytes_received
-  const sentPct = total > 0 ? (bytes_sent / total) * 100 : 50
-  const recvPct = 100 - sentPct
 
   return (
     <div
@@ -43,17 +34,34 @@ export function BandwidthPanel({ bandwidth }: BandwidthPanelProps) {
         Bandwidth
       </h2>
 
-      {/* Split bar: sent vs received */}
+      {/* Split bar: sent vs received. Render a neutral empty bar when total === 0. */}
       <div>
         <div className="flex h-3 rounded-full overflow-hidden gap-px" style={{ backgroundColor: 'var(--ctp-base)' }}>
-          <div
-            style={{ width: `${sentPct}%`, backgroundColor: 'var(--ctp-blue)', transition: 'width 0.4s ease' }}
-            title={`Sent: ${humanBytes(bytes_sent)}`}
-          />
-          <div
-            style={{ width: `${recvPct}%`, backgroundColor: 'var(--ctp-green)', transition: 'width 0.4s ease' }}
-            title={`Received: ${humanBytes(bytes_received)}`}
-          />
+          {total === 0 ? (
+            <div
+              style={{ width: '100%', backgroundColor: 'var(--ctp-overlay)', opacity: 0.3 }}
+              title="No data yet"
+            />
+          ) : (
+            <>
+              <div
+                style={{
+                  width: `${(bytes_sent / total) * 100}%`,
+                  backgroundColor: 'var(--ctp-blue)',
+                  transition: 'width 0.4s ease',
+                }}
+                title={`Sent: ${humanBytes(bytes_sent)}`}
+              />
+              <div
+                style={{
+                  width: `${(bytes_received / total) * 100}%`,
+                  backgroundColor: 'var(--ctp-green)',
+                  transition: 'width 0.4s ease',
+                }}
+                title={`Received: ${humanBytes(bytes_received)}`}
+              />
+            </>
+          )}
         </div>
         <div className="flex justify-between mt-1">
           <div className="flex items-center gap-1">

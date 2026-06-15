@@ -2,12 +2,30 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
+import { getColorSchemeFoucScript } from './src/hooks/color-scheme/fouc-blocker'
+
+// FOUC-blocker script generated from react-kit fouc-blocker.ts.
+// Injected synchronously into <head> before any stylesheet or paint so the
+// data-theme attribute is set before first render.
+const foucScript = getColorSchemeFoucScript({
+  storageKey: 'radix-metrics-theme',
+  strategy: 'data-attribute',
+})
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    {
+      name: 'inject-fouc-blocker',
+      transformIndexHtml(html) {
+        return html.replace(
+          /<!-- ?synchronous theme initialisation[\s\S]*?<\/script>/i,
+          `<script>${foucScript}</script>`
+        )
+      },
+    },
   ],
   base: '/',
   resolve: {

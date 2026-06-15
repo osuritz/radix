@@ -1,4 +1,4 @@
-import { useTheme } from '@/hooks/useTheme'
+import { useColorScheme } from '@/hooks/color-scheme/color-scheme'
 import { useMetrics } from '@/hooks/useMetrics'
 import { Header } from '@/components/Header'
 import { KpiCard } from '@/components/KpiCard'
@@ -7,19 +7,10 @@ import { StatusCodesChart } from '@/components/StatusCodesChart'
 import { LatencyPanel } from '@/components/LatencyPanel'
 import { BandwidthPanel } from '@/components/BandwidthPanel'
 import { CommandStats } from '@/components/CommandStats'
+import { formatMs, formatUptime } from '@/utils/format'
 
-/** Format uptime seconds into a human-readable string */
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${Math.floor(seconds)}s`
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60)
-    const s = Math.floor(seconds % 60)
-    return `${m}m ${s}s`
-  }
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  return `${h}h ${m}m`
-}
+/** Commands that have per-command stats panels. */
+const COMMAND_STATS_COMMANDS = new Set(['echo', 'mock', 'proxy'])
 
 function ErrorBanner({ message }: { message: string }) {
   return (
@@ -43,7 +34,7 @@ function ErrorBanner({ message }: { message: string }) {
 }
 
 export default function App() {
-  const { theme, toggleTheme } = useTheme()
+  const { colorScheme, setColorScheme } = useColorScheme()
   const { snapshot, history, error, live } = useMetrics()
 
   const req = snapshot?.requests
@@ -53,7 +44,12 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--ctp-base)' }}>
-      <Header snapshot={snapshot} live={live} theme={theme} toggleTheme={toggleTheme} />
+      <Header
+        snapshot={snapshot}
+        live={live}
+        colorScheme={colorScheme}
+        setColorScheme={setColorScheme}
+      />
 
       <main className="max-w-7xl mx-auto px-4 py-6 flex flex-col gap-6">
         {/* Error banner */}
@@ -88,8 +84,8 @@ export default function App() {
               />
               <KpiCard
                 label="p50 Latency"
-                value={rt ? (rt.p50_ms < 1 ? '<1ms' : rt.p50_ms >= 1000 ? `${(rt.p50_ms / 1000).toFixed(2)}s` : `${rt.p50_ms.toFixed(1)}ms`) : '—'}
-                subValue={rt ? `p99: ${rt.p99_ms >= 1000 ? `${(rt.p99_ms / 1000).toFixed(2)}s` : `${rt.p99_ms.toFixed(0)}ms`}` : undefined}
+                value={rt ? formatMs(rt.p50_ms) : '—'}
+                subValue={rt ? `p99: ${formatMs(rt.p99_ms)}` : undefined}
                 accent="lavender"
               />
               <KpiCard
@@ -118,10 +114,10 @@ export default function App() {
               {bw && <BandwidthPanel bandwidth={bw} />}
             </section>
 
-            {/* Command-specific stats */}
-            {snapshot.command && (
+            {/* Command-specific stats — only rendered for commands that have panels */}
+            {snapshot.command && srv?.command && COMMAND_STATS_COMMANDS.has(srv.command) && (
               <section aria-label="Command statistics">
-                <CommandStats command={snapshot.command} commandName={srv?.command ?? 'command'} />
+                <CommandStats command={snapshot.command} commandName={snapshot.server.command} />
               </section>
             )}
           </>

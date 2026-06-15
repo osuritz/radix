@@ -14,23 +14,44 @@ interface StatusCodesChartProps {
   statusCodes: StatusCodesMap;
 }
 
-/** Pick a color for a status text key */
+/**
+ * Maps canonical Go http.StatusText() reason phrases to a color by HTTP class.
+ * 2xx → green, 3xx → lavender, 4xx → yellow, 5xx → red.
+ * Unknown phrases default to neutral overlay (NOT the OK color).
+ */
+const STATUS_COLORS: Record<string, string> = {
+  // 2xx — success
+  'OK': 'var(--ctp-green)',
+  'Created': 'var(--ctp-green)',
+  'Accepted': 'var(--ctp-green)',
+  'No Content': 'var(--ctp-green)',
+  // 3xx — redirect
+  'Moved Permanently': 'var(--ctp-lavender)',
+  'Found': 'var(--ctp-lavender)',
+  'Not Modified': 'var(--ctp-lavender)',
+  'Temporary Redirect': 'var(--ctp-lavender)',
+  'Permanent Redirect': 'var(--ctp-lavender)',
+  // 4xx — client error
+  'Bad Request': 'var(--ctp-yellow)',
+  'Unauthorized': 'var(--ctp-yellow)',
+  'Forbidden': 'var(--ctp-yellow)',
+  'Not Found': 'var(--ctp-yellow)',
+  'Method Not Allowed': 'var(--ctp-yellow)',
+  'Conflict': 'var(--ctp-yellow)',
+  'Gone': 'var(--ctp-yellow)',
+  'Unprocessable Entity': 'var(--ctp-yellow)',
+  'Too Many Requests': 'var(--ctp-yellow)',
+  // 5xx — server error
+  'Internal Server Error': 'var(--ctp-red)',
+  'Not Implemented': 'var(--ctp-red)',
+  'Bad Gateway': 'var(--ctp-red)',
+  'Service Unavailable': 'var(--ctp-red)',
+  'Gateway Timeout': 'var(--ctp-red)',
+}
+
+/** Pick a color for a status text key via the canonical phrase map. */
 function statusColor(key: string): string {
-  const lower = key.toLowerCase()
-  if (lower.includes('not found') || lower.includes('unauthorized') || lower.includes('forbidden')) {
-    return 'var(--ctp-yellow)'
-  }
-  if (lower.includes('error') || lower.includes('bad') || lower.includes('gateway') || lower.includes('timeout')) {
-    return 'var(--ctp-red)'
-  }
-  if (lower.includes('created') || lower.includes('accepted') || lower.includes('no content')) {
-    return 'var(--ctp-green)'
-  }
-  if (lower.includes('redirect') || lower.includes('moved') || lower.includes('found')) {
-    return 'var(--ctp-lavender)'
-  }
-  // "OK", "Continue", etc.
-  return 'var(--ctp-blue)'
+  return STATUS_COLORS[key] ?? 'var(--ctp-overlay)'
 }
 
 export function StatusCodesChart({ statusCodes }: StatusCodesChartProps) {

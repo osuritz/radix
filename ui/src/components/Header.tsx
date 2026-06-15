@@ -1,12 +1,12 @@
-import type { Theme } from '@/hooks/useTheme'
+import type { ColorScheme, UserSpecifiedColorScheme } from '@/hooks/color-scheme/color-scheme'
 import type { MetricsSnapshot } from '@/types/metrics'
 import { POLL_INTERVAL_MS } from '@/hooks/useMetrics'
 
 interface HeaderProps {
   snapshot: MetricsSnapshot | null;
   live: boolean;
-  theme: Theme;
-  toggleTheme: () => void;
+  colorScheme: ColorScheme | null;
+  setColorScheme: (value: UserSpecifiedColorScheme | null) => Promise<void>;
 }
 
 const commandColors: Record<string, { bg: string; text: string }> = {
@@ -16,10 +16,19 @@ const commandColors: Record<string, { bg: string; text: string }> = {
   serve: { bg: 'var(--ctp-yellow)', text: 'var(--ctp-base)' },
 }
 
-export function Header({ snapshot, live, theme, toggleTheme }: HeaderProps) {
+/** Neutral color for unknown commands — does not imply "serve" yellow. */
+const UNKNOWN_COMMAND_COLOR = { bg: 'var(--ctp-overlay)', text: 'var(--ctp-base)' }
+
+export function Header({ snapshot, live, colorScheme, setColorScheme }: HeaderProps) {
   const command = snapshot?.server.command
-  const cmdColors = command ? commandColors[command] ?? commandColors['serve'] : null
+  const cmdColors = command ? (commandColors[command] ?? UNKNOWN_COMMAND_COLOR) : null
   const refreshSecs = POLL_INTERVAL_MS / 1000
+
+  const isDark = colorScheme === 'dark'
+
+  function toggleColorScheme() {
+    void setColorScheme(isDark ? 'light' : 'dark')
+  }
 
   return (
     <header
@@ -83,8 +92,8 @@ export function Header({ snapshot, live, theme, toggleTheme }: HeaderProps) {
 
       {/* Theme toggle */}
       <button
-        onClick={toggleTheme}
-        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        onClick={toggleColorScheme}
+        aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
         style={{
           backgroundColor: 'var(--ctp-base)',
           borderColor: 'var(--ctp-border)',
@@ -92,7 +101,7 @@ export function Header({ snapshot, live, theme, toggleTheme }: HeaderProps) {
         }}
         className="border rounded p-1.5 text-sm hover:opacity-80 transition-opacity flex-shrink-0"
       >
-        {theme === 'dark' ? (
+        {isDark ? (
           // Sun icon
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="4" />

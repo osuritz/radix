@@ -268,3 +268,97 @@ func TestServeUI_SPAFallbackNoCORS(t *testing.T) {
 		})
 	}
 }
+
+// TestContentTypeForPath verifies that contentTypeForPath returns canonical MIME
+// types for well-known extensions, bypassing any OS registry overrides.
+func TestContentTypeForPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		path   string
+		wantCT string
+	}{
+		{"/assets/app.js", "text/javascript; charset=utf-8"},
+		{"/assets/app.mjs", "text/javascript; charset=utf-8"},
+		{"/assets/style.css", "text/css; charset=utf-8"},
+		{"/assets/logo.svg", "image/svg+xml"},
+		{"/assets/font.woff2", "font/woff2"},
+		{"/assets/font.woff", "font/woff"},
+		{"/assets/font.ttf", "font/ttf"},
+		{"/index.html", "text/html; charset=utf-8"},
+		{"/assets/data.json", "application/json"},
+		{"/assets/app.js.map", "application/json"},
+		{"/favicon.ico", "image/x-icon"},
+		{"/logo.png", "image/png"},
+		{"/hero.webp", "image/webp"},
+		{"/robots.txt", "text/plain; charset=utf-8"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			got := contentTypeForPath(tt.path)
+			if got != tt.wantCT {
+				t.Errorf("contentTypeForPath(%q) = %q, want %q", tt.path, got, tt.wantCT)
+			}
+		})
+	}
+}
+
+// TestServeUI_MissingStaticAsset404 verifies that a request for a path that
+// looks like a static asset (has an extension) but does not exist in the FS
+// returns 404 rather than the SPA index.html.
+func TestServeUI_MissingStaticAsset404(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("<html>spa</html>"), ModTime: time.Now()},
+	}
+	mux := newTestMux(t, fsys, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/missing-xyz.js", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("missing asset: status = %d, want %d (NotFound)", resp.StatusCode, http.StatusNotFound)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "spa") {
+		t.Error("missing static asset should NOT fall back to index.html")
+	}
+}
+
+// TestServeUI_DeepLinkFallback verifies that an extensionless deep-link that
+// does not exist in the FS is served as index.html (SPA fallback).
+func TestServeUI_DeepLinkFallback(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("<html>spa</html>"), ModTime: time.Now()},
+	}
+	mux := newTestMux(t, fsys, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/deep", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("deep-link fallback: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("deep-link fallback: Content-Type = %q, want text/html", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "spa") {
+		t.Errorf("deep-link fallback: body = %q, expected index.html content", body)
+	}
+}
