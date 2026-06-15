@@ -21,9 +21,18 @@ type HeaderProvider interface {
 	Name() string
 }
 
+// AuthMetricsRecorder records the proxy command's auth-injection counter. It is
+// satisfied by *metrics.Collector; the middleware depends on this narrow
+// interface rather than the metrics package so it stays decoupled. The method
+// must be safe to call on a nil receiver (the concrete collector's is).
+type AuthMetricsRecorder interface {
+	RecordProxyAuthInjection()
+}
+
 // injectOptions holds optional behavior for InjectHeaders.
 type injectOptions struct {
-	logw io.Writer // when non-nil, a redacted injection summary is written here
+	logw    io.Writer           // when non-nil, a redacted injection summary is written here
+	metrics AuthMetricsRecorder // when non-nil, counts auth-header injections
 }
 
 // InjectOption configures InjectHeaders.
@@ -35,6 +44,13 @@ type InjectOption func(*injectOptions)
 // into logs. Passing a nil writer disables logging.
 func WithVerboseLogging(w io.Writer) InjectOption {
 	return func(o *injectOptions) { o.logw = w }
+}
+
+// WithMetrics makes the middleware record a per-command auth-injection counter
+// on rec for every request that has at least one header injected. Passing a nil
+// recorder disables counting; the recorder's method is also nil-safe.
+func WithMetrics(rec AuthMetricsRecorder) InjectOption {
+	return func(o *injectOptions) { o.metrics = rec }
 }
 
 // InjectHeaders returns middleware that uses a HeaderProvider to inject headers into requests.
@@ -66,8 +82,13 @@ func InjectHeaders(provider HeaderProvider, opts ...InjectOption) func(http.Hand
 					r.Header.Add(key, v)
 				}
 			}
-			if o.logw != nil && len(hdrs) > 0 {
-				fmt.Fprintf(o.logw, "auth: injected %s via %q\n", redactedHeaderList(hdrs), provider.Name())
+			if len(hdrs) > 0 {
+				if o.metrics != nil {
+					o.metrics.RecordProxyAuthInjection()
+				}
+				if o.logw != nil {
+					fmt.Fprintf(o.logw, "auth: injected %s via %q\n", redactedHeaderList(hdrs), provider.Name())
+				}
 			}
 			next.ServeHTTP(w, r)
 		})

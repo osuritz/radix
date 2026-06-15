@@ -71,6 +71,22 @@ type EchoConfig struct {
 	// matching /delay/<dur>, where <dur> is a Go duration or a bare number of
 	// seconds. The derived delay is capped at maxPathDelay.
 	DelayFromPath bool
+
+	// Metrics, when non-nil, records per-command echo counters (delays applied,
+	// custom-body responses, path-derived status hits). It is nil when metrics
+	// are disabled; EchoMetricsRecorder methods are also nil-safe so recording is
+	// always side-effect-free w.r.t. the response.
+	Metrics EchoMetricsRecorder
+}
+
+// EchoMetricsRecorder records the echo command's per-command counters. It is
+// satisfied by *metrics.Collector; the server package depends on this narrow
+// interface rather than the metrics package so the handler stays decoupled. All
+// methods must be safe to call on a nil receiver (the concrete collector's are).
+type EchoMetricsRecorder interface {
+	RecordEchoDelay()
+	RecordEchoCustomBody()
+	RecordEchoPathStatus()
 }
 
 // maxPathDelay caps the delay derived from /delay/<dur> paths.
@@ -125,6 +141,9 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e.cfg.StatusFromPath {
 		if s, ok := statusFromPath(r.URL.Path); ok {
 			status = s
+			if e.cfg.Metrics != nil {
+				e.cfg.Metrics.RecordEchoPathStatus()
+			}
 		}
 	}
 
@@ -139,6 +158,9 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if delayApplied > 0 {
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.RecordEchoDelay()
+		}
 		t := time.NewTimer(delayApplied)
 		defer t.Stop()
 		select {
@@ -179,6 +201,9 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Literal body override: return verbatim, no echo JSON.
 	if e.cfg.Body != "" {
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.RecordEchoCustomBody()
+		}
 		w.Header().Set("Content-Type", e.cfg.ContentType)
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, e.cfg.Body)
