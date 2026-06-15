@@ -24,7 +24,25 @@ success() { printf 'ok: %s\n' "$*"; }
 
 # ── stubs (replaced in later tasks) ──────────────────────────────────────────
 
-detect_platform()    { die "not implemented"; }
+detect_platform() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+
+  case "$os" in
+    Darwin) os="darwin" ;;
+    Linux)  os="linux"  ;;
+    *) die "unsupported OS: ${os}" ;;
+  esac
+
+  case "$arch" in
+    x86_64)        arch="x86_64" ;;
+    arm64|aarch64) arch="arm64"  ;;
+    *) die "unsupported architecture: ${arch}" ;;
+  esac
+
+  echo "${os}_${arch}"
+}
 resolve_version()    { die "not implemented"; }
 version_number()     { die "not implemented"; }
 download_files()     { die "not implemented"; }
