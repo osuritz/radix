@@ -34,19 +34,41 @@ features:
     link: /guides/observability
 ---
 
-> 🚧 Documentation in progress
+Radix is one binary that does the job of several local-dev tools. Instead of
+juggling `http-server`, a hand-rolled proxy, `httpbin`, and an echo endpoint,
+you run one command per mode and point it at a directory or a backend.
 
-Radix is a single self-contained binary that replaces several local development
-tools. Pick a mode, point it at a directory or a backend, and go.
+```bash
+radix serve .                       # static files on http://localhost:8080
+radix proxy http://localhost:3000   # reverse proxy to your backend
+radix echo                          # echo every request back as JSON
+radix mock                          # httpbin-style mock API
+```
+
+Every mode shares the same plumbing: TLS, CORS, gzip, access logging, and
+metrics on a dedicated admin port — no extra wiring.
 
 ## Install
 
 ```bash
-# Go install
 go install github.com/osuritz/radix/cmd/radix@latest
-
-# Homebrew, Scoop, and prebuilt binaries — see Getting started
 ```
 
-See [Getting started](/getting-started) for full installation options and your
-first `serve` and `proxy`.
+Prebuilt binaries for Linux, macOS, and Windows are on the
+[releases page](https://github.com/osuritz/radix/releases). See
+[Getting started](/getting-started) for download steps and your first server.
+
+::: tip
+Homebrew and Scoop packaging are planned but not available yet — use
+`go install` or a release binary today.
+:::
+
+## Pick your mode
+
+- [serve](/commands/serve) — static files, SPA mode, HTTPS
+- [proxy](/commands/proxy) — reverse proxy, path rewrite, header injection
+- [echo](/commands/echo) — request-to-JSON for debugging
+- [mock](/commands/mock) — built-in + custom-route API mocking
+- [gencert](/commands/gencert) — self-signed certs for local HTTPS/mTLS
+- [validate](/commands/validate) — check a config or routes file
+- [version](/commands/version) — build and version info
