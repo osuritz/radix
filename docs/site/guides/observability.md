@@ -40,6 +40,12 @@ compatibility shim, `echo` and `mock` still serve legacy `/_health` and
 `--metrics-port` must differ from the app `--port`, must be `1..65535`, and the
 metrics path must start with `/` and can't be the reserved `/healthz`.
 
+::: tip Prefer a UI?
+The admin server also serves a live web dashboard at the same address
+(`http://127.0.0.1:9090`) that reads these same metrics. See the
+[Metrics dashboard](/guides/dashboard) guide.
+:::
+
 ## Health check
 
 ```bash
