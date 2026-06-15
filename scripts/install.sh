@@ -60,7 +60,22 @@ resolve_version() {
 # GoReleaser strips the leading 'v' from .Version in archive filenames.
 # e.g. tag v0.7.1 → filename prefix 0.7.1
 version_number() { echo "${1#v}"; }
-download_files()     { die "not implemented"; }
+# Downloads archive and checksums.txt from the resolved tag URL into tmpdir.
+# Uses -f so HTTP errors (404, 403, rate-limit) surface immediately rather than
+# writing an error page to disk.
+download_files() {
+  local tag="$1" ver="$2" platform="$3" tmpdir="$4"
+  local base="https://github.com/${REPO}/releases/download/${tag}"
+  local archive="radix_${ver}_${platform}.tar.gz"
+
+  info "Downloading ${archive} ..."
+  curl -fsSL --max-time 60 "${base}/${archive}" -o "${tmpdir}/${archive}" \
+    || die "download failed: ${base}/${archive}"
+
+  info "Downloading checksums.txt ..."
+  curl -fsSL --max-time 30 "${base}/checksums.txt" -o "${tmpdir}/checksums.txt" \
+    || die "download failed: ${base}/checksums.txt"
+}
 verify_checksum()    { die "not implemented"; }
 extract_and_install(){ die "not implemented"; }
 setup_path()         { die "not implemented"; }
