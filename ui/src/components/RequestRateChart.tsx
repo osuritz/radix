@@ -14,6 +14,13 @@ interface RequestRateChartProps {
   history: HistoryPoint[];
 }
 
+/** A single chart-ready data point produced by {@link toChartData}. */
+export interface ChartDataPoint {
+  time: string;
+  rate: number;
+  errorsPerSec: number;
+}
+
 function formatTime(t: number): string {
   const d = new Date(t)
   const h = d.getHours().toString().padStart(2, '0')
@@ -22,15 +29,16 @@ function formatTime(t: number): string {
   return `${h}:${m}:${s}`
 }
 
-export function RequestRateChart({ history }: RequestRateChartProps) {
-  // Unique IDs per instance so SVG gradient ids don't collide if mounted twice.
-  const uid = useId()
-  const rateGradId = `rateGrad-${uid}`
-  const errGradId = `errGrad-${uid}`
-
-  // Derive per-second error RATE from consecutive history samples.
-  // Cumulative counter resets (e.g. server restart) are clamped to 0.
-  const data = history.map((p, i) => {
+/**
+ * Convert a history ring-buffer into chart-ready data points.
+ *
+ * - The first point always has `errorsPerSec = 0` (no previous sample to diff).
+ * - Cumulative counter resets (server restart) are clamped to 0, never negative.
+ *
+ * Exported for unit-testing purposes; the component uses it internally.
+ */
+export function toChartData(history: HistoryPoint[]): ChartDataPoint[] {
+  return history.map((p, i) => {
     let errPerSec = 0
     if (i > 0) {
       const prev = history[i - 1]
@@ -45,6 +53,15 @@ export function RequestRateChart({ history }: RequestRateChartProps) {
       errorsPerSec: +errPerSec.toFixed(2),
     }
   })
+}
+
+export function RequestRateChart({ history }: RequestRateChartProps) {
+  // Unique IDs per instance so SVG gradient ids don't collide if mounted twice.
+  const uid = useId()
+  const rateGradId = `rateGrad-${uid}`
+  const errGradId = `errGrad-${uid}`
+
+  const data = toChartData(history)
 
   return (
     <div

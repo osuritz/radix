@@ -116,45 +116,22 @@ func serveStaticFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, fsPath,
 	_, _ = io.Copy(w, f)
 }
 
-// contentTypeForPath returns the canonical MIME type for the given path by
-// switching on its extension. This avoids relying on mime.TypeByExtension,
-// which on Windows can return incorrect types when the registry overrides known
-// extensions (e.g. .css → text/plain, which breaks stylesheets and module
-// scripts). For extensions not in the switch, it falls back to
-// mime.TypeByExtension and finally "application/octet-stream".
+// contentTypeForPath returns the canonical MIME type for the given path based on
+// its extension. It sources known web extensions from the shared
+// webContentTypes table (see mime.go) — the single source of truth — rather than
+// relying on mime.TypeByExtension, which on Windows can return incorrect types
+// when the registry overrides known extensions (e.g. .css → text/plain, which
+// breaks stylesheets and module scripts). For extensions not in that table it
+// falls back to mime.TypeByExtension and finally "application/octet-stream".
 func contentTypeForPath(p string) string {
-	switch strings.ToLower(path.Ext(p)) {
-	case ".html":
-		return "text/html; charset=utf-8"
-	case ".js", ".mjs":
-		return "text/javascript; charset=utf-8"
-	case ".css":
-		return "text/css; charset=utf-8"
-	case ".json", ".map":
-		return "application/json"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".woff2":
-		return "font/woff2"
-	case ".woff":
-		return "font/woff"
-	case ".ttf":
-		return "font/ttf"
-	case ".txt":
-		return "text/plain; charset=utf-8"
-	default:
-		ext := strings.ToLower(path.Ext(p))
-		if ct := mime.TypeByExtension(ext); ct != "" {
-			return ct
-		}
-		return "application/octet-stream"
+	ext := strings.ToLower(path.Ext(p))
+	if ct, ok := webContentTypes[ext]; ok {
+		return ct
 	}
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	return "application/octet-stream"
 }
 
 // serveIndexOrPlaceholder serves the cached index.html bytes when available,

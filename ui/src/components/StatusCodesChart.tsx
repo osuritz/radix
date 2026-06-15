@@ -49,8 +49,11 @@ const STATUS_COLORS: Record<string, string> = {
   'Gateway Timeout': 'var(--ctp-red)',
 }
 
-/** Pick a color for a status text key via the canonical phrase map. */
-function statusColor(key: string): string {
+/**
+ * Pick a color for a status text key via the canonical phrase map.
+ * Exported for unit-testing purposes; the component uses it internally.
+ */
+export function statusColor(key: string): string {
   return STATUS_COLORS[key] ?? 'var(--ctp-overlay)'
 }
 
