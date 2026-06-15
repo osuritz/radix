@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library only (`math/rand/v2` + `sync/atomic`). See the README mock section and
   `examples/mock-routes.yml`.
 
+### Fixed
+
+- **SSE mock routes through the middleware chain** — the logging/metrics/gzip
+  response-writer wrappers now pass through `Flush()`/`Unwrap()`, so `sse:` routes
+  stream correctly via the CLI instead of returning 500. (Previously only worked
+  in unit tests, where the handler was called with a flushable recorder directly.)
+
 ## [0.6.0] - 2026-06-15
 
 ### Added
