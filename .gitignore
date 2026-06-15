@@ -37,10 +37,14 @@ go.work.sum
 
 # Build output
 bin/
-dist/
+/dist/
 build/
 *.tar.gz
 *.zip
+
+# Embedded web UI: commit the placeholder, ignore built assets
+/ui/dist/*
+!/ui/dist/.gitkeep
 
 # Docs site (VitePress) — Node toolchain & build artifacts, not a Go dependency
 node_modules/

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Synchronous theme initialisation — runs before any stylesheet or paint,
+         eliminating the flash-of-unstyled-content (FOUC) for theme switching.
+         MUST stay first in <head> and use the exact localStorage key and
+         data-theme values that useTheme.ts reads/writes. -->
+    <script>
+      (function () {
+        var stored;
+        try { stored = localStorage.getItem('radix-metrics-theme'); } catch (_) {}
+        var theme =
+          stored === 'dark' || stored === 'light'
+            ? stored
+            : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Radix Metrics</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

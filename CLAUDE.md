@@ -90,6 +90,7 @@ radix/
 │   │   ├── mock_routes.go           # Custom YAML routes: load/compile/match/template
 │   │   ├── mock_watch.go            # Routes-file hot-reload (fsnotify)
 │   │   ├── redirect.go              # HTTP→HTTPS redirect handler
+│   │   ├── ui.go                    # Embedded SPA handler + CORS for /_metrics
 │   │   └── middleware/
 │   │       ├── logging.go           # Request logging (CLF, Extended CLF, Dev)
 │   │       ├── metrics.go           # Metrics collection middleware
@@ -118,6 +119,9 @@ radix/
 │   │   └── release.yml              # Release automation
 │   └── ISSUE_TEMPLATE/
 │
+├── ui/                              # Vite+React+TypeScript metrics dashboard (source)
+│   └── dist/                        # Compiled SPA (embedded via assets.go)
+│
 ├── scripts/
 │   └── smoke.sh                      # End-to-end smoke test (build + exercise all commands)
 │
@@ -126,6 +130,7 @@ radix/
 │   ├── mock-routes.yml              # Example custom mock routes
 │   └── mocks/                       # Sample mock response bodies
 │
+├── assets.go                        # //go:embed ui/dist → exports UIAssets
 ├── Makefile                         # Build automation
 ├── .golangci.yml                    # Linter configuration
 ├── .goreleaser.yml                  # Release configuration
@@ -497,7 +502,10 @@ func TestLoggingMiddleware(t *testing.T) {
 ### Building
 
 ```bash
-# Build for current platform
+# Build the UI (React SPA embedded in the binary); also run automatically by make build
+make ui
+
+# Build for current platform (runs make ui first, skips gracefully if npm is absent)
 make build
 
 # Binary output: ./bin/radix

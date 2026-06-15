@@ -82,6 +82,23 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
 
+  ui-tests:
+    name: UI Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Run UI tests
+        run: cd ui && npm ci && npm test
+
   build:
     name: Build
     strategy:
@@ -97,6 +114,16 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+
+      # Node is required only in the build job because `make build` triggers
+      # `make ui` to compile the React SPA and embed it. The lint, security, and
+      # test jobs are Go-only and intentionally omit the Node setup step.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
 
       - name: Build binary
         run: make build

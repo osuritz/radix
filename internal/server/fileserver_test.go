@@ -95,6 +95,32 @@ func TestFileServer_ServesFiles(t *testing.T) {
 	}
 }
 
+// TestFileServer_CanonicalCSSContentType verifies that the static file server
+// serves a .css asset with the canonical text/css Content-Type. This guards
+// against issue #68: on Windows the stdlib mime table can be overridden by the
+// system registry (e.g. .css → text/plain), which makes browsers refuse the
+// stylesheet. The server package's init() seeds canonical types into the stdlib
+// mime table that http.FileServer consults, so NewFileServer must emit text/css.
+func TestFileServer_CanonicalCSSContentType(t *testing.T) {
+	dir := setupTestDir(t) // contains style.css
+	handler := server.NewFileServer(server.FileServerConfig{
+		Dir:   dir,
+		Index: "index.html",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/css") {
+		t.Errorf("Content-Type = %q, want it to contain %q", ct, "text/css")
+	}
+}
+
 func TestFileServer_NotFoundWithoutSPA(t *testing.T) {
 	dir := setupTestDir(t)
 	handler := server.NewFileServer(server.FileServerConfig{

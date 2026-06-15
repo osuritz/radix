@@ -632,6 +632,38 @@ The admin server shuts down gracefully alongside the main server on `SIGINT` /
 `/_ready` JSON endpoints on the app port for backward compatibility; `/healthz`
 on the admin port is the liveness endpoint going forward.)
 
+### Metrics web dashboard
+
+When metrics are enabled, the admin server also serves an embedded React
+dashboard at `http://127.0.0.1:9090/` (the same host/port as `/_metrics` and
+`/healthz`). It is a self-contained SPA compiled into the binary — no separate
+process or network dependency required.
+
+The dashboard polls `/_metrics` every 2 seconds and keeps a rolling 2-minute
+client-side history. It shows:
+
+- **KPIs** — total requests, error count + rate, p50 latency, requests/s, and uptime
+- **Request-rate area chart** and **status-code bar chart**
+- **Latency percentiles** (p50/p95/p99)
+- **Bandwidth** (bytes in/out)
+- **Command-specific counters** for `mock`, `proxy`, and `echo` (same data as the per-command table above)
+
+Themes: **Catppuccin Frappe** (dark) and **Latte** (light). The toggle persists
+to `localStorage` and defaults to the system preference.
+
+**Building the UI.** `make build` builds the UI automatically before compiling
+the binary. If `npm` is not on `PATH`, the UI step is skipped gracefully and a
+developer-friendly placeholder page is embedded instead. To build the UI alone:
+
+```bash
+make ui
+```
+
+**UI development.** Run `cd ui && npm run dev` to start the Vite dev server on
+`:5173`. It proxies `/_metrics` requests to the running radix admin port
+(`:9090`), so you can iterate on the dashboard with hot-module replacement while
+radix is running separately.
+
 ## TLS Certificates
 
 The `gencert` command generates self-signed certificates for local HTTPS. By

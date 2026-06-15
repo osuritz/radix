@@ -107,9 +107,12 @@ func NewAdminServer(cfg *AdminConfig) (*AdminServer, error) {
 		if cfg.MetricsPath == config.HealthzPath {
 			return nil, fmt.Errorf("admin metrics path %q collides with the reserved %q liveness path", cfg.MetricsPath, config.HealthzPath)
 		}
-		mux.Handle(cfg.MetricsPath, cfg.Collector.Handler(cfg.MetricsFormat))
+		mux.Handle(cfg.MetricsPath, withMetricsCORS(cfg.Collector.Handler(cfg.MetricsFormat)))
 	}
 	mux.HandleFunc(config.HealthzPath, healthzHandler(startTime, cfg.Version))
+	if err := ServeUI(mux); err != nil {
+		return nil, fmt.Errorf("admin server: %w", err)
+	}
 
 	addr := net.JoinHostPort(AdminLoopbackHost, strconv.Itoa(cfg.Port))
 
