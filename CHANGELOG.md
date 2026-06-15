@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-15
+
 ### Added
 
 - **Per-command metrics for `echo`, `mock`, and `proxy`** — the existing
@@ -296,7 +298,8 @@ shutdown.
 ### Note
 This is an alpha release to test the release workflow. Server commands (serve, proxy, echo, mock) are not yet implemented.
 
-[Unreleased]: https://github.com/osuritz/radix/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/osuritz/radix/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/osuritz/radix/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/osuritz/radix/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/osuritz/radix/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/osuritz/radix/compare/v0.2.0...v0.3.0
