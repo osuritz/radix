@@ -127,6 +127,21 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return size, err
 }
 
+// Flush forwards to the underlying ResponseWriter's Flush when it supports
+// http.Flusher, keeping the wrapper transparent to streaming handlers (e.g. the
+// SSE mock route). It is a no-op when the underlying writer is not flushable.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped ResponseWriter so http.NewResponseController (and
+// any other chain-walker) can reach the underlying writer's capabilities.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // Logging returns a middleware that logs HTTP requests.
 //
 // The output writer and the dev-format color decision are resolved once, here,
