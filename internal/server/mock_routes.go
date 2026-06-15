@@ -659,9 +659,18 @@ func compileSSEEvents(events []SSEEventYAML, seq *atomic.Uint64) ([]compiledSSEE
 			repeat = 1
 		}
 
+		// The event name is written raw onto the wire as "event: <name>\n", so an
+		// embedded CR/LF would break (or let config forge) the SSE framing. The
+		// name is config-authored (trusted), but reject the malformed case at load
+		// time, matching the fail-fast style of the delay/repeat validation above.
+		event := strings.TrimSpace(e.Event)
+		if strings.ContainsAny(event, "\r\n") {
+			return nil, fmt.Errorf("sse event #%d: event name must not contain newlines", i+1)
+		}
+
 		ce := compiledSSEEvent{
 			delay:       delay,
-			event:       strings.TrimSpace(e.Event),
+			event:       event,
 			repeat:      repeat,
 			repeatDelay: repeatDelay,
 		}
@@ -927,7 +936,9 @@ func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params ma
 // any stream bytes are written. Each event honors its delay (and repeat_delay
 // between repeats) via a timer that also selects on the request context, so the
 // handler returns promptly when the client disconnects. Every event is flushed
-// after it is written so the client observes events incrementally.
+// after it is written so the client observes events incrementally. A write
+// error (client disconnected / broken pipe) also stops the stream immediately,
+// so a zero-delay/high-repeat script bails as soon as the peer goes away.
 func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data map[string]any) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -963,7 +974,14 @@ func (cr *compiledRoute) serveSSE(w http.ResponseWriter, r *http.Request, data m
 				flusher.Flush()
 				return
 			}
-			writeSSEEvent(w, ev.event, rendered)
+			if err := writeSSEEvent(w, ev.event, rendered); err != nil {
+				// Write failed (client disconnected / broken pipe): stop streaming
+				// immediately rather than rendering and writing the rest of the
+				// script. This bails promptly even for a zero-delay/high-repeat
+				// stream, which otherwise would only notice at the next sleepCtx
+				// context check.
+				return
+			}
 			flusher.Flush()
 		}
 	}
@@ -985,17 +1003,32 @@ func (ev *compiledSSEEvent) render(data map[string]any) (string, error) {
 // writeSSEEvent writes one event in SSE wire format: an optional `event: <name>`
 // line, one `data: <line>` line per line of the rendered payload (so multi-line
 // data becomes multiple data: fields), and a blank line terminating the event.
-func writeSSEEvent(w io.Writer, event, data string) {
+// It returns the first write error so the caller can stop streaming when the
+// client has disconnected.
+func writeSSEEvent(w io.Writer, event, data string) error {
 	if event != "" {
-		_, _ = io.WriteString(w, "event: "+event+"\n")
+		if _, err := io.WriteString(w, "event: "+event+"\n"); err != nil {
+			return err
+		}
 	}
+	// Normalize every newline variant to "\n" before splitting. The SSE spec
+	// treats "\r\n", a lone "\r", and "\n" all as line terminators, so a bare
+	// "\r" left unsplit would be honored by the EventSource client but NOT
+	// re-prefixed with "data: " here — letting request-controlled payloads (e.g.
+	// data: {{.query.msg}}) forge event:/data:/id: fields. Normalizing first
+	// guarantees every logical line gets a data: prefix.
+	normalized := strings.ReplaceAll(data, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	// Split on "\n" so multi-line rendered data emits one data: field per line,
 	// matching the SSE spec (the client rejoins them with newlines). A trailing
 	// newline yields a final empty data: line, which is benign.
-	for _, line := range strings.Split(data, "\n") {
-		_, _ = io.WriteString(w, "data: "+line+"\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		if _, err := io.WriteString(w, "data: "+line+"\n"); err != nil {
+			return err
+		}
 	}
-	_, _ = io.WriteString(w, "\n")
+	_, err := io.WriteString(w, "\n")
+	return err
 }
 
 // sleepCtx waits for d, returning false if the context is canceled first (and

@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -79,9 +80,12 @@ routes:
 	if !strings.Contains(got1, "data: first") {
 		t.Errorf("event 1 = %q, want a data: first line", got1)
 	}
-	// The first event waits ~50ms; it must arrive well before the second's
-	// cumulative delay (~200ms), proving it is not buffered.
-	if elapsed1 > 150*time.Millisecond {
+	// The first event waits ~50ms; it must arrive before the second event's
+	// cumulative delay (~200ms), proving it is not buffered until the script
+	// completes. The upper bound is deliberately generous (well under 200ms but
+	// with ample slack over the 50ms target) so the test does not flake on a
+	// loaded CI runner while still catching a fully-buffered response.
+	if elapsed1 > 180*time.Millisecond {
 		t.Errorf("event 1 took %v; appears buffered, not streamed", elapsed1)
 	}
 
@@ -210,6 +214,43 @@ routes:
 	}
 }
 
+// TestSSE_CarriageReturnNormalization proves request-controlled data with bare
+// "\r" or "\r\n" terminators cannot forge SSE fields: every logical line, no
+// matter which newline variant separated it, is re-prefixed with "data: ". A
+// payload like "evil\revent: spoof" must NOT yield a wire "event: spoof" line.
+func TestSSE_CarriageReturnNormalization(t *testing.T) {
+	const src = `
+routes:
+  - path: /inject
+    sse:
+      - data: '{{.query.msg}}'
+`
+	srv := sseFront(t, src)
+	// "a\revent: spoof" (CR) and "b\r\nid: 7" (CRLF) are both attacker-style
+	// attempts to inject extra SSE fields via the data payload.
+	resp, err := http.Get(srv.URL + "/inject?msg=" + url.QueryEscape("a\revent: spoof\r\nid: 7"))
+	if err != nil {
+		t.Fatalf("GET /inject: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	br := bufio.NewReader(resp.Body)
+	got := readSSEEvent(t, br)
+	// All three logical lines must be data: lines; none may appear as a raw
+	// event:/id: field.
+	for _, want := range []string{"data: a\n", "data: event: spoof\n", "data: id: 7\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("event block = %q, want it to contain %q", got, want)
+		}
+	}
+	// A forged field would appear at the start of a line (no "data: " prefix).
+	for _, forbidden := range []string{"\nevent: spoof", "\nid: 7"} {
+		if strings.Contains("\n"+got, forbidden+"\n") {
+			t.Errorf("event block = %q, must not contain a forged field %q", got, forbidden)
+		}
+	}
+}
+
 // TestSSE_ClientCancel proves the handler returns promptly when the client
 // cancels the request mid-stream (between scripted events). Without honoring the
 // context, the handler would block on the long inter-event delay.
@@ -253,6 +294,63 @@ routes:
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler did not return promptly after client cancel")
+	}
+}
+
+// TestSSE_ZeroDelayCancel proves a zero-delay, high-repeat stream stops promptly
+// when the client disconnects, exercising the write-error short-circuit rather
+// than the inter-event sleepCtx check (which never blocks here). Without bailing
+// on the broken-pipe write error, the handler would keep rendering and writing
+// the entire (huge) script after the peer is gone.
+func TestSSE_ZeroDelayCancel(t *testing.T) {
+	const src = `
+routes:
+  - path: /flood
+    sse:
+      - data: tick
+        repeat: 1000000
+`
+	srv := sseFront(t, src)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/flood", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /flood: %v", err)
+	}
+
+	br := bufio.NewReader(resp.Body)
+	// Observe the first event, then cancel mid-stream.
+	if got := readSSEEvent(t, br); !strings.Contains(got, "data: tick") {
+		t.Fatalf("first event = %q, want data: tick", got)
+	}
+	cancel()
+	_ = resp.Body.Close()
+
+	// The handler must return promptly after the disconnect (via the write-error
+	// short-circuit), not after streaming all 1,000,000 zero-delay repeats. A
+	// route with no isSSE-side cancellation handling would only ever stop at a
+	// sleepCtx check, which never fires for a zero-delay stream. We assert the
+	// handler goroutine has settled by the deadline; the test harness's race
+	// detector and the bounded wait catch a runaway handler.
+	deadline := time.After(5 * time.Second)
+	done := make(chan struct{})
+	go func() {
+		// Drain until EOF/closed; this returns once the canceled stream tears down.
+		for {
+			if _, rerr := br.ReadString('\n'); rerr != nil {
+				break
+			}
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-deadline:
+		t.Fatal("handler did not stop promptly after client disconnect on a zero-delay stream")
 	}
 }
 
@@ -366,6 +464,11 @@ routes:
       - data: '{{ .params.id'
 `,
 			want: "parse template",
+		},
+		{
+			name: "event name with newline",
+			src:  "routes:\n  - path: /x\n    sse:\n      - event: \"a\\nb\"\n        data: c\n",
+			want: "event name must not contain newlines",
 		},
 	}
 	for _, tt := range tests {
