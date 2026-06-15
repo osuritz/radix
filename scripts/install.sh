@@ -84,7 +84,7 @@ verify_checksum() {
   filename="$(basename "$archive_path")"
 
   local match_count
-  match_count=$(grep -c "  ${filename}$" "$checksums_path") || match_count=0
+  match_count=$(grep -cF "  ${filename}" "$checksums_path") || match_count=0
   case "$match_count" in
     0) die "checksum entry for ${filename} not found in checksums.txt" ;;
     1) ;;
@@ -92,7 +92,7 @@ verify_checksum() {
   esac
 
   local expected
-  expected="$(grep "  ${filename}$" "$checksums_path" | awk '{print $1}')"
+  expected="$(grep -F "  ${filename}" "$checksums_path" | awk '{print $1}')"
 
   local actual
   if command -v shasum >/dev/null 2>&1; then
