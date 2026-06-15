@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prose lands in a follow-up. The docs are a Node-only toolchain isolated to
   `docs/` and do not affect the Go binary or `go.mod`.
 
+### Changed
+
+- **CI: upgraded GitHub Actions to current Node 24-based majors** (`checkout@v6`,
+  `setup-go@v6`, `setup-node@v6`, `upload-artifact@v7`, `upload-pages-artifact@v5`,
+  `deploy-pages@v5`, `codecov-action@v7`, `goreleaser-action@v7`) ahead of the
+  GitHub runner Node 20 removal (Sept 2026); docs build now runs on Node 22 LTS.
+
 ## [0.5.0] - 2026-06-14
 
 ### Added
