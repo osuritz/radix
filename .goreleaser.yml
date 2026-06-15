@@ -4,6 +4,10 @@ before:
   hooks:
     - go mod tidy
     - go mod download
+    - cmd: npm ci
+      dir: ui
+    - cmd: npm run build
+      dir: ui
 
 builds:
   - id: radix

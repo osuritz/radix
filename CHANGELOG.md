@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Embedded metrics web dashboard** — a Vite+React+TypeScript SPA is compiled
+  under `ui/dist` and embedded in the binary via `//go:embed` (`assets.go` at the
+  repo root). When metrics are enabled, the admin server (default
+  `http://127.0.0.1:9090`) serves the dashboard at `/` alongside `/_metrics` and
+  `/healthz`. The dashboard polls `/_metrics` every 2 seconds, keeps a
+  client-side rolling 2-minute history, and displays KPIs (total requests,
+  error rate, p50 latency, req/s, uptime), a request-rate area chart, a
+  status-code bar chart, latency percentiles (p50/p95/p99), bandwidth, and
+  command-specific counters (`mock`/`proxy`/`echo`). Supports Catppuccin Frappe
+  (dark) and Latte (light) themes; the toggle persists to `localStorage` and
+  defaults to the system preference. Build with `make ui` (also run automatically
+  by `make build`; gracefully skipped if npm is absent, embedding a
+  "run make ui" placeholder instead). UI-only dev: `cd ui && npm run dev` starts
+  Vite on `:5173`, proxying `/_metrics` to `:9090`.
+
 ## [0.7.1] - 2026-06-15
 
 ### Fixed

@@ -1,4 +1,4 @@
-.PHONY: build test lint install clean run coverage smoke help
+.PHONY: build ui test lint install clean run coverage smoke help
 
 # Version information
 VERSION ?= dev
@@ -18,7 +18,12 @@ help: ## Show this help message
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build the binary
+ui: ## Build the embedded web UI (skipped gracefully if npm/ui absent)
+	@if command -v npm >/dev/null 2>&1 && [ -f ui/package.json ]; then \
+		echo "Building web UI..."; cd ui && npm ci && npm run build; \
+	else echo "npm or ui/package.json not found; skipping UI build (binary embeds placeholder)"; fi
+
+build: ui ## Build the binary
 	@echo "Building $(BINARY)..."
 	@mkdir -p $(BUILD_DIR)
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/radix
