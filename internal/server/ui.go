@@ -164,23 +164,3 @@ code{background:#f0f0f0;padding:.2em .4em;border-radius:4px;font-size:.95em}</st
 </div></body></html>
 `))
 }
-
-// withMetricsCORS returns an http.Handler that adds permissive CORS headers so
-// the Vite dev server (typically on :5173) can fetch /_metrics directly. Only
-// the metrics endpoint uses this; all other admin routes are unaffected.
-//
-// Allowed methods: GET, OPTIONS. Preflight OPTIONS requests receive 204.
-func withMetricsCORS(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		h.ServeHTTP(w, r)
-	})
-}
