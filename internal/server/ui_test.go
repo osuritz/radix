@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/osuritz/radix/internal/metrics"
+	"github.com/osuritz/radix/internal/server/middleware"
 )
 
 // newTestMux builds a ServeMux with metrics + healthz + SPA wired up, exactly
@@ -18,7 +19,7 @@ func newTestMux(t *testing.T, fsys fstest.MapFS, collector *metrics.Collector) *
 	t.Helper()
 	mux := http.NewServeMux()
 	if collector != nil {
-		mux.Handle("/_metrics", withMetricsCORS(collector.Handler("json")))
+		mux.Handle("/_metrics", middleware.MetricsCORS()(collector.Handler("json")))
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
