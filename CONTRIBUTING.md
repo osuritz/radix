@@ -134,7 +134,7 @@ free port range starting at 18080.
 
 `radix` embeds a metrics dashboard — a Vite + React + TypeScript single-page app
 under `ui/` — into the binary via a `//go:embed` directive (see `assets.go`). It
-compiles to `ui/dist`; building it requires Node (CI uses Node 22) and is a
+compiles to `ui/dist`; building it requires Node (CI uses Node 24) and is a
 frontend-only toolchain, not a Go dependency.
 
 ```bash
