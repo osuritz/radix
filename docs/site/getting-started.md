@@ -4,6 +4,23 @@ Install radix and have a server running in under a minute.
 
 ## Install
 
+### One-liner (macOS and Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | bash
+```
+
+Installs the latest release to `~/.radix/bin` and adds it to your PATH. No Go
+toolchain required. To pin a version or install to a custom directory:
+
+```bash
+# Pin a specific release
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | RADIX_VERSION=v0.7.1 bash
+
+# Install to a custom directory (PATH step is skipped — you manage PATH)
+curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.sh | RADIX_INSTALL_DIR=/usr/local/bin bash
+```
+
 ### go install
 
 If you have Go 1.25+ installed:
@@ -23,7 +40,7 @@ Linux/macOS, `.zip` for Windows — plus `checksums.txt` to verify it.
 
 ```bash
 # Linux/macOS — replace the version, OS, and arch to match the asset you downloaded
-tar -xzf radix_0.6.0_darwin_arm64.tar.gz
+tar -xzf radix_0.7.1_darwin_arm64.tar.gz
 chmod +x radix
 sudo mv radix /usr/local/bin/    # or anywhere on your PATH
 
@@ -33,8 +50,7 @@ radix version
 On Windows, unzip the `.zip` and put `radix.exe` somewhere on your `PATH`.
 
 ::: tip Planned
-Homebrew and Scoop packaging are on the roadmap. Until they land, use
-`go install` or a release binary.
+Homebrew and Scoop packaging are on the roadmap.
 :::
 
 ## Your first `serve`
