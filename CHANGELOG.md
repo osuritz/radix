@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Friendly "address already in use" errors on Windows** — the bind-error
+  classifier matched `syscall.EADDRINUSE`, which on Windows is a placeholder
+  value that real socket errors never carry (winsock returns `WSAEADDRINUSE`),
+  so Windows users got the generic bind message. The classifier now matches
+  the platform-correct errno.
 - **Graceful-shutdown race: listener could outlive shutdown** — `Server.Serve`
   returned after `http.Server.Shutdown` without joining the serve goroutine, so
   under load a cancellation racing the goroutine's listener registration could

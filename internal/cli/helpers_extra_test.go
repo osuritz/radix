@@ -4,8 +4,23 @@ import (
 	"bytes"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// assertBindFailure fails the test unless err is the bind failure produced
+// when the app port is already occupied. It matches the server's own
+// classified "is already in use" message rather than the OS error text, which
+// differs across platforms (Windows reports "Only one usage of each socket
+// address ... is normally permitted"). This also guards the classification
+// itself: classifyError must recognize EADDRINUSE on every platform,
+// including Windows' WSAEADDRINUSE.
+func assertBindFailure(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "is already in use") {
+		t.Errorf("error = %v, want an address-in-use bind failure", err)
+	}
+}
 
 // occupiedPort returns a 127.0.0.1 port that stays bound for the lifetime of
 // the test (the backing listener is closed via t.Cleanup). A server configured

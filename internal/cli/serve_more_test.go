@@ -146,9 +146,7 @@ func TestRunServe_FullServerPathBindFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 }
 
 func TestRunServe_TLSConfigError(t *testing.T) {
@@ -203,7 +201,5 @@ func TestRunServe_TLSWithHSTSAndRedirectBindFailure(t *testing.T) {
 	if strings.Contains(err.Error(), "TLS configuration error") {
 		t.Errorf("valid certs should pass TLS setup; got %v", err)
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 }

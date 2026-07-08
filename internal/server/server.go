@@ -225,7 +225,7 @@ func (s *Server) shutdown() error {
 func (s *Server) classifyError(err error) error {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		if errors.Is(opErr.Err, syscall.EADDRINUSE) {
+		if errors.Is(opErr.Err, errAddrInUse) {
 			return fmt.Errorf("address %s is already in use: %w", s.httpServer.Addr, err)
 		}
 		// Provide a friendlier message for other bind errors

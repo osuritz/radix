@@ -110,9 +110,7 @@ func TestRunEcho_FlagOverridesApplied(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 
 	// All Changed flags must have overridden the config.
 	e := cfg.Echo
@@ -167,9 +165,7 @@ func TestRunEcho_FullServerPathBindFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 }
 
 func TestRunEcho_TLSConfigError(t *testing.T) {

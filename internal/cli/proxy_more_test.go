@@ -214,9 +214,7 @@ func TestRunProxy_FullServerPathBindFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 }
 
 func TestRunProxy_TLSConfigError(t *testing.T) {

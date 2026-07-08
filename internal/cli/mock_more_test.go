@@ -255,9 +255,7 @@ routes:
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 	// The file's cors: true must have been reflected into cfg (no CLI override).
 	if !cfg.Mock.CORS {
 		t.Error("expected file-level cors: true to be reflected into cfg.Mock.CORS")
@@ -301,9 +299,7 @@ func TestRunMock_BuiltinsOnlyBindFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected bind error from occupied port, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in use") {
-		t.Errorf("error = %v, want an address-in-use bind failure", err)
-	}
+	assertBindFailure(t, err)
 }
 
 func TestRunMock_TLSConfigError(t *testing.T) {
