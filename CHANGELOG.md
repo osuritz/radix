@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mock client-certificate integration** — custom mock routes can now react to
+  the client TLS certificate: response templates get a `.tls` section
+  (`{{.tls.client_cert.cn}}`, `o`, `serial`, `not_before`/`not_after`, sha256
+  `fingerprint`, `issuer_cn`/`issuer_o`, plus `.tls.enabled` and
+  `.tls.client_cert_present`), route conditions accept `tls.`-prefixed matchers
+  (exact and `*` wildcard; a `tls.` rule never matches certless requests), and a
+  route-level `require_client_cert: true` returns a 403 JSON error when no
+  verified certificate was presented. To make per-route requirements reachable,
+  `radix mock` gains `--optional-client-auth` (maps to TLS
+  `VerifyClientCertIfGiven`; requires `--tls` and `--ca`, conflicts with
+  `--client-auth`, whose require-and-verify behavior is unchanged). See
+  `examples/mock-routes.yml` and the mock docs pages.
+- **`radix validate --type`** — the previously inert `--type` flag now works:
+  `auto` (default) detects a mock-routes file by its top-level
+  `routes`/`settings` keys and validates it through the real route compiler
+  (`✓ Routes: N compiled`) instead of silently mis-validating routes files as
+  main configs; `--type main` / `--type mock-routes` force a mode.
+- **Performance benchmark suite** — benchmarks for static file serving
+  (small/large/gzip), mock route matching and template rendering, the reverse
+  proxy end-to-end, the logging+metrics+gzip middleware stack, and the metrics
+  collector (serial, parallel, snapshot), plus a `make bench` target.
+- **Gated GPG release signing** — `.goreleaser.yml` signs `checksums.txt` into a
+  detached `checksums.txt.asc` when the `GPG_PRIVATE_KEY`/`GPG_FINGERPRINT`
+  secrets are configured (optional `GPG_PASSPHRASE` supported via loopback
+  pinentry); releases without the secrets skip signing and still succeed. New
+  `docs/VERIFICATION.md` covers checksum and signature verification, and README
+  links to it.
+- **Real-world recipes page** — `docs/site/guides/recipes.md` with five
+  end-to-end scenarios (SPA dev server + API proxy, third-party API mocking with
+  hot reload, HTTPS local dev with a trusted CA, webhook debugging with echo,
+  corporate proxy with keychain-sourced auth headers).
 - **Embedded metrics web dashboard** — a Vite+React+TypeScript SPA is compiled
   under `ui/dist` and embedded in the binary via `//go:embed` (`assets.go` at the
   repo root). When metrics are enabled, the admin server (default
@@ -23,6 +54,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by `make build`; gracefully skipped if npm is absent, embedding a
   "run make ui" placeholder instead). UI-only dev: `cd ui && npm run dev` starts
   Vite on `:5173`, proxying `/_metrics` to `:9090`.
+
+### Fixed
+
+- **Graceful-shutdown race: listener could outlive shutdown** — `Server.Serve`
+  returned after `http.Server.Shutdown` without joining the serve goroutine, so
+  under load a cancellation racing the goroutine's listener registration could
+  leave the port briefly open after `Serve`/`runServers` returned. `Serve` now
+  joins the serve goroutine on the cancel path before returning (and surfaces a
+  real serve error that raced with a successful shutdown instead of silently
+  dropping it).
+
+### Changed
+
+- **CLI help and error polish** — every command now has a proper cobra
+  `Example` block (moved out of `Long`), consistent flag help phrasing, and
+  error messages that name the offending flag or file (e.g. gencert
+  key-type/curve/size errors, proxy target errors, validate config-path errors).
+
+### Testing
+
+- **Coverage raised past the >80% target across the board** — `internal/cli`
+  44% → 95%, `internal/config` 70% → 96%, `internal/version` 75% → 100%
+  (other packages were already above target). Includes a behavioral CLI-layer
+  test proving the serve command attaches configured gzip/CORS middleware, a
+  unit-tested `mockServerTLSOptions` seam guarding the `--optional-client-auth`
+  CLI-to-TLS wiring (mutation-verified), and TLS integration tests exercising
+  mock client-cert matching over real handshakes with generated CA/client
+  certificates.
 
 ## [0.7.1] - 2026-06-15
 
