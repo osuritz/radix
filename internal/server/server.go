@@ -171,7 +171,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(s.output, "\nShutting down...")
-		return s.shutdown()
+		err := s.shutdown()
+		// Join the serve goroutine before returning. http.Server.Shutdown only
+		// closes listeners the server is already tracking; if cancellation won
+		// the race with listenAndServe registering the (pre-bound) listener, the
+		// listener would otherwise be closed asynchronously after Serve returns,
+		// briefly leaking the port. Joining guarantees listenAndServe has
+		// returned — and therefore the listener is closed — before Serve does.
+		if serveErr := <-errCh; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) && err == nil {
+			err = s.classifyError(serveErr)
+		}
+		return err
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return s.classifyError(err)
