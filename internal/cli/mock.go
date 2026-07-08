@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/osuritz/radix/internal/config"
 	"github.com/osuritz/radix/internal/metrics"
 	"github.com/osuritz/radix/internal/server"
 	"github.com/osuritz/radix/internal/server/middleware"
@@ -19,15 +21,16 @@ import (
 )
 
 var (
-	mockLatency       string
-	mockLatencyJitter string
-	mockFailRate      float64
-	mockFailStatus    int
-	mockCORS          bool
-	mockBuiltin       bool
-	mockPrefix        string
-	mockRoutes        string
-	mockWatch         bool
+	mockLatency            string
+	mockLatencyJitter      string
+	mockFailRate           float64
+	mockFailStatus         int
+	mockCORS               bool
+	mockBuiltin            bool
+	mockPrefix             string
+	mockRoutes             string
+	mockWatch              bool
+	mockOptionalClientAuth bool
 )
 
 var mockCmd = &cobra.Command{
@@ -54,17 +57,21 @@ rejected; the previous good config keeps serving). CORS is applied once at
 startup and is not hot-reloaded. Explicitly-set CLI flags always win over the
 file. Pass the routes file positionally or via --routes (not both).
 
-Examples:
-  radix mock                                  # Built-in endpoints on :8080
-  radix mock --latency 200ms                  # Add 200ms latency to all responses
+Over HTTPS, custom routes can inspect the TLS client certificate: templates
+expose {{.tls.client_cert.cn}} (plus o, serial, not_before, not_after,
+fingerprint, issuer_cn, issuer_o), conditions can match certificate fields via
+tls.-prefixed keys (e.g. tls.cn), and require_client_cert: true rejects
+certless requests with a 403. Use --optional-client-auth (with --tls and --ca)
+to request but not require a certificate, so require_client_cert routes are
+reachable; the global --client-auth flag instead rejects certless connections
+at the TLS layer.`,
+	Example: `  radix mock                                   # Built-in endpoints on :8080
   radix mock --latency 200ms --latency-jitter 100ms
-  radix mock --fail-rate 10                    # Fail 10% of requests with 500
-  radix mock --fail-rate 25 --fail-status 503  # Fail 25% with 503
-  radix mock --prefix /_test                   # GET /_test/get
-  radix mock --cors                            # Enable CORS headers
-  radix mock routes.yml                         # Load custom routes (positional)
+  radix mock --fail-rate 25 --fail-status 503  # Fail 25% of requests with 503
+  radix mock --prefix /_test                   # Built-ins under /_test (GET /_test/get)
   radix mock --routes routes.yml --watch       # Custom routes with hot-reload
-  radix mock --tls --cert c.pem --key k.pem    # HTTPS mock`,
+  radix mock routes.yml --tls --cert ./certs/cert.pem --key ./certs/key.pem \
+    --ca ./certs/ca.pem --optional-client-auth # Per-route client-cert rules`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runMock,
 }
@@ -79,6 +86,8 @@ func init() {
 	mockCmd.Flags().StringVar(&mockPrefix, "prefix", "", "path prefix for built-in endpoints (e.g. /_test)")
 	mockCmd.Flags().StringVarP(&mockRoutes, "routes", "r", "", "YAML routes file defining custom routes")
 	mockCmd.Flags().BoolVarP(&mockWatch, "watch", "w", false, "reload the routes file on change (hot-reload)")
+	mockCmd.Flags().BoolVar(&mockOptionalClientAuth, "optional-client-auth", false,
+		"request but do not require a client certificate (verified when presented); enables require_client_cert routes")
 }
 
 // applyMockFlags overrides mock config fields from CLI flags that were
@@ -137,6 +146,27 @@ func runMock(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateMetricsConfig(); err != nil {
 		return err
+	}
+
+	// --optional-client-auth requests (but does not require) a client
+	// certificate so per-route require_client_cert rules can decide. It only
+	// makes sense over TLS, and combining it with the stricter global
+	// --client-auth (which already rejects certless connections at the TLS
+	// layer) is ambiguous, so both misuses are rejected up front. A client CA
+	// (--ca) is required too: without one Go would verify presented
+	// certificates against the SYSTEM root store, silently rejecting the
+	// user's own gencert client certs while accepting any WebPKI clientAuth
+	// certificate.
+	if mockOptionalClientAuth {
+		if !cfg.TLS.Enabled {
+			return errors.New("--optional-client-auth requires --tls")
+		}
+		if cfg.TLS.ClientAuth {
+			return errors.New("--optional-client-auth cannot be combined with --client-auth (which already requires a client certificate)")
+		}
+		if cfg.TLS.CA == "" {
+			return errors.New("--optional-client-auth requires --ca (the CA file presented client certificates are verified against)")
+		}
 	}
 
 	// Parse latency durations from their config string form.
@@ -261,13 +291,7 @@ func runMock(cmd *cobra.Command, args []string) error {
 	scheme := "http"
 	if cfg.TLS.Enabled {
 		scheme = "https"
-		tlsCfg, tlsErr := radixTLS.NewServerTLSConfig(radixTLS.ServerTLSOptions{
-			CertFile:   cfg.TLS.Cert,
-			KeyFile:    cfg.TLS.Key,
-			CAFile:     cfg.TLS.CA,
-			ClientAuth: cfg.TLS.ClientAuth,
-			MinVersion: cfg.TLS.MinVersion,
-		})
+		tlsCfg, tlsErr := radixTLS.NewServerTLSConfig(mockServerTLSOptions(cfg))
 		if tlsErr != nil {
 			return fmt.Errorf("TLS configuration error: %w", tlsErr)
 		}
@@ -286,6 +310,21 @@ func runMock(cmd *cobra.Command, args []string) error {
 	}
 
 	return runServers(ctx, srv, admin)
+}
+
+// mockServerTLSOptions builds the TLS loader options for the mock server from
+// the loaded config plus the mock-specific --optional-client-auth flag. It is
+// factored out of runMock so the wiring — notably ClientAuthOptional — can be
+// asserted directly in tests.
+func mockServerTLSOptions(c *config.Config) radixTLS.ServerTLSOptions {
+	return radixTLS.ServerTLSOptions{
+		CertFile:           c.TLS.Cert,
+		KeyFile:            c.TLS.Key,
+		CAFile:             c.TLS.CA,
+		ClientAuth:         c.TLS.ClientAuth,
+		ClientAuthOptional: mockOptionalClientAuth,
+		MinVersion:         c.TLS.MinVersion,
+	}
 }
 
 // resolveRoutesArg reconciles the positional config-file argument with the

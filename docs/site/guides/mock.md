@@ -114,6 +114,7 @@ you the request; functions generate data.
 | `.query.q` | Query parameter `q` |
 | `.headers.X` | Request header `X` |
 | `.body.field` | Top-level scalar of the parsed JSON body, or a form value |
+| `.tls.client_cert.cn` | Presented client-certificate field (see [Client certificates](#client-certificates-mtls)) |
 
 ::: tip Header names with dashes
 `.headers.Content-Type` isn't a valid template field. Use `index`:
@@ -353,6 +354,101 @@ for i in $(seq 10); do curl -s -o /dev/null -w "%{http_code} " localhost:8080/ap
 `sequence`, `random`, `sse`, and `conditions`/`response` are mutually exclusive —
 a route uses at most one. (`websocket` is not yet supported; it's ignored if
 present.)
+:::
+
+## Client certificates (mTLS)
+
+When the mock runs over HTTPS, custom routes can inspect the TLS client
+certificate. Generate certificates and start the server so a client certificate
+is *requested but not required* — a presented certificate is verified against
+the CA, while certless connections still reach your routes:
+
+```bash
+radix gencert && radix gencert --client
+radix mock routes.yml --tls --cert certs/cert.pem --key certs/key.pem \
+  --ca certs/ca.pem --optional-client-auth
+```
+
+(With the global `--client-auth` flag instead, certless connections are
+rejected during the TLS handshake, before any route runs.)
+
+### Certificate fields in templates
+
+The certificate is exposed under `.tls` — every field is an **empty string**
+when no certificate was presented, so templates never error on a certless
+request:
+
+::: v-pre
+
+| Expression | What it is |
+|------------|------------|
+| `.tls.client_cert.cn` / `.o` | Subject common name / organization |
+| `.tls.client_cert.serial` | Serial number (decimal) |
+| `.tls.client_cert.not_before` / `.not_after` | Validity window (RFC 3339) |
+| `.tls.client_cert.fingerprint` | SHA-256 of the DER certificate (lowercase hex, no colons) |
+| `.tls.client_cert.issuer_cn` / `.issuer_o` | Issuer common name / organization |
+| `.tls.enabled` | `true` when the request came over TLS |
+| `.tls.client_cert_present` | `true` when a client certificate was presented |
+
+:::
+
+### Matching on certificate fields
+
+Conditions accept `tls.`-prefixed match keys naming any of the certificate
+fields above (`tls.cn`, `tls.o`, `tls.serial`, `tls.not_before`,
+`tls.not_after`, `tls.fingerprint`, `tls.issuer_cn`, `tls.issuer_o`). As with
+other match keys, `"*"` means "present with any non-empty value" and anything
+else is an exact match — but a `tls.` rule (including `"*"`) never matches when
+no certificate was presented.
+
+```yaml
+- path: /api/whoami
+  method: GET
+  conditions:
+    - match:
+        tls.cn: service-a            # exact subject CN
+      response:
+        status: 200
+        body: '{"hello":"{{.tls.client_cert.cn}}","org":"{{.tls.client_cert.o}}"}'
+    - match:
+        tls.cn: "*"                  # any client certificate presented
+      response:
+        status: 200
+        body: '{"hello":"{{.tls.client_cert.cn}}"}'
+    - default: true
+      response:
+        status: 401
+        body: '{"error":"who are you?"}'
+```
+
+### Requiring a certificate per route
+
+`require_client_cert: true` rejects requests without a verified client
+certificate with a `403` JSON error, before any per-route delay or response
+selection:
+
+```yaml
+- path: /api/secure
+  method: GET
+  require_client_cert: true
+  response:
+    status: 200
+    body: '{"serial":"{{.tls.client_cert.serial}}","sha256":"{{.tls.client_cert.fingerprint}}"}'
+```
+
+```bash
+curl --cacert certs/ca.pem https://localhost:8080/api/secure
+# {"error":"client certificate required"}          (403)
+
+curl --cacert certs/ca.pem --cert certs/client.pem --key certs/client-key.pem \
+  https://localhost:8080/api/secure
+# {"serial":"...","sha256":"..."}                  (200)
+```
+
+::: tip
+`require_client_cert` needs the server to accept certless connections at the
+TLS layer (`--optional-client-auth`) for the 403 to be reachable — under
+`--client-auth` the handshake itself already rejects them.
 :::
 
 ## Settings and chaos

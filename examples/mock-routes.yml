@@ -24,6 +24,13 @@
 #   {{faker.name}} / .email / .phone / .address   placeholder identity data
 #   {{env "VAR"}}                     environment variable value
 #   {{base64 "s"}}                    base64-encoded string
+#
+# Over HTTPS (--tls), the presented client certificate is exposed under .tls
+# (all fields are empty strings when no certificate was presented):
+#   {{.tls.client_cert.cn}} / .o / .serial / .not_before / .not_after
+#   {{.tls.client_cert.fingerprint}}  lowercase-hex SHA-256 of the DER cert
+#   {{.tls.client_cert.issuer_cn}} / .issuer_o
+#   {{.tls.enabled}} / {{.tls.client_cert_present}}
 
 settings:
   # Global latency/chaos (CLI flags override these). Durations accept Go
@@ -274,3 +281,53 @@ routes:
         response:
           status: 503
           body: '{"error":"service unavailable"}'
+
+  # --- Client certificates (HTTPS/mTLS) --------------------------------------
+  # When radix mock runs with --tls, routes can inspect the client certificate:
+  #   - Templates render its fields via {{.tls.client_cert.*}} (see the header
+  #     comment above); every field is an empty string when no certificate was
+  #     presented, so a template never errors on a certless request.
+  #   - Conditions can match certificate fields with tls.-prefixed keys
+  #     (tls.cn, tls.o, tls.serial, tls.not_before, tls.not_after,
+  #     tls.fingerprint, tls.issuer_cn, tls.issuer_o). "*" means "a client
+  #     certificate with a non-empty value was presented"; anything else is an
+  #     exact match. A tls.* rule never matches a certless request. Fingerprint
+  #     values are lowercase hex without colons.
+  #   - `require_client_cert: true` rejects certless requests on that route
+  #     with a 403 JSON error.
+  #
+  # For require_client_cert (and the certless condition arms) to be reachable,
+  # start the server so a certificate is requested but not required:
+  #   radix gencert && radix gencert --client
+  #   radix mock routes.yml --tls --cert certs/cert.pem --key certs/key.pem \
+  #     --ca certs/ca.pem --optional-client-auth
+  # (With the global --client-auth flag instead, certless connections are
+  # rejected at the TLS layer before any route runs.)
+  #
+  # The routes below are commented out because they are only meaningful with
+  # --tls; uncomment them to try the flow.
+  #
+  # - path: /api/whoami
+  #   method: GET
+  #   conditions:
+  #     - match:
+  #         tls.cn: service-a          # exact subject CN match
+  #       response:
+  #         status: 200
+  #         body: '{"hello":"{{.tls.client_cert.cn}}","org":"{{.tls.client_cert.o}}"}'
+  #     - match:
+  #         tls.cn: "*"                # any client certificate presented
+  #       response:
+  #         status: 200
+  #         body: '{"hello":"{{.tls.client_cert.cn}}","expires":"{{.tls.client_cert.not_after}}"}'
+  #     - default: true
+  #       response:
+  #         status: 401
+  #         body: '{"error":"who are you?"}'
+  #
+  # - path: /api/secure
+  #   method: GET
+  #   require_client_cert: true        # 403 JSON error when no cert presented
+  #   response:
+  #     status: 200
+  #     body: '{"serial":"{{.tls.client_cert.serial}}","sha256":"{{.tls.client_cert.fingerprint}}"}'

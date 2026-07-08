@@ -6,6 +6,7 @@ import (
 	"crypto/md5"  //nolint:gosec // md5 is offered only for non-security mock fixture generation, never for auth/integrity.
 	"crypto/sha1" //nolint:gosec // sha1 is offered only for non-security mock fixture generation, never for auth/integrity.
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -94,8 +95,9 @@ const (
 // file-backed templated response bodies, per-route delay, conditional responses
 // (the `conditions:` block), scripted Server-Sent Events (the `sse:` block,
 // which streams a text/event-stream response), stateful sequenced responses (the
-// `sequence:` block, optionally with `repeat:`), and weighted-random responses
-// (the `random:` block).
+// `sequence:` block, optionally with `repeat:`), weighted-random responses
+// (the `random:` block), and client-certificate integration (`tls.` condition
+// match keys, `require_client_cert:`, and the `.tls` template data section).
 //
 // The remaining advanced key from the design doc (websocket) is intentionally
 // NOT modeled and is ignored gracefully when present: it unmarshals into nothing
@@ -185,6 +187,14 @@ type RouteDefYAML struct {
 	Sequence    []ResponseYAML         `yaml:"sequence"` // stateful cycle of responses
 	Repeat      bool                   `yaml:"repeat"`   // when true, sequence loops back to the first after the last
 	Random      []WeightedResponseYAML `yaml:"random"`   // weighted-random selection
+
+	// RequireClientCert, when true, rejects requests that did not present a
+	// verified TLS client certificate with a 403 JSON error. It applies to
+	// every selector kind (response/conditions/sse/sequence/random). For the
+	// 403 path to be reachable the server must accept certless connections at
+	// the TLS layer (e.g. `radix mock --tls --ca ... --optional-client-auth`);
+	// with the global --client-auth flag certless connections never get here.
+	RequireClientCert bool `yaml:"require_client_cert"`
 }
 
 // WeightedResponseYAML is one arm of a route's random: block — a positive
@@ -217,10 +227,13 @@ type SSEEventYAML struct {
 //
 // Match keys are dotted and must be prefixed with one of: "body.<field>" (a
 // top-level field of the parsed JSON object or a form-urlencoded value),
-// "query.<key>" (first query value), or "headers.<Name>" (canonical-cased,
-// first header value). Nested body paths (e.g. "body.a.b") are NOT supported.
-// A value of "*" matches when the key is present with any non-empty value; any
-// other value requires an exact string match.
+// "query.<key>" (first query value), "headers.<Name>" (canonical-cased,
+// first header value), or "tls.<field>" (a presented client-certificate field,
+// see routeTLSMatchFields). Nested body paths (e.g. "body.a.b") are NOT
+// supported. A value of "*" matches when the key is present with any non-empty
+// value; any other value requires an exact string match. A "tls." rule
+// (including a "*" wildcard) never matches when no client certificate was
+// presented.
 type ConditionYAML struct {
 	Match    map[string]string `yaml:"match"`
 	Default  bool              `yaml:"default"`
@@ -318,7 +331,24 @@ const (
 	matchBody   matchKind = iota // body.<field>
 	matchQuery                   // query.<key>
 	matchHeader                  // headers.<Name>
+	matchTLS                     // tls.<field> (client-certificate field)
 )
+
+// routeTLSMatchFields is the set of client-certificate fields a condition may
+// match via the "tls." prefix (e.g. `tls.cn: service-a`). The names mirror the
+// client_cert template data map built by routeTLSData, so a field a template
+// can render is also a field a condition can match. An unknown field is a
+// load-time error (see parseMatchKey).
+var routeTLSMatchFields = map[string]struct{}{
+	"cn":          {},
+	"o":           {},
+	"serial":      {},
+	"not_before":  {},
+	"not_after":   {},
+	"fingerprint": {},
+	"issuer_cn":   {},
+	"issuer_o":    {},
+}
 
 // matchRule is one compiled "body.x: value" / "query.x: value" /
 // "headers.X: value" entry. wildcard is true when the YAML value was "*",
@@ -340,6 +370,11 @@ type compiledRoute struct {
 	methods     map[string]struct{} // nil => any method
 	delay       time.Duration
 	delayJitter time.Duration
+
+	// requireClientCert rejects requests without a presented (and therefore
+	// TLS-layer-verified) client certificate with a 403 before any delay or
+	// response selection. See RouteDefYAML.RequireClientCert.
+	requireClientCert bool
 
 	// Match data, depending on kind.
 	segments []string       // routeParam: split path segments (":name" for params)
@@ -421,6 +456,12 @@ type CompiledRoutes struct {
 // returned value is a copy and safe to read concurrently.
 func (c *CompiledRoutes) Settings() RouteSettings {
 	return c.settings
+}
+
+// RouteCount returns the number of compiled routes. It is used by callers that
+// report on a loaded routes file (e.g. `radix validate` for a mock-routes file).
+func (c *CompiledRoutes) RouteCount() int {
+	return len(c.routes)
 }
 
 // LoadRoutes reads and compiles a routes file from disk. The returned
@@ -557,12 +598,13 @@ func compileRoute(rd *RouteDefYAML) (compiledRoute, error) {
 	}
 
 	cr := compiledRoute{
-		rawPath:     path,
-		methods:     methodSet(rd),
-		delay:       rd.Delay.Duration(),
-		delayJitter: rd.DelayJitter.Duration(),
-		seq:         new(atomic.Uint64),
-		seqSel:      new(atomic.Uint64),
+		rawPath:           path,
+		methods:           methodSet(rd),
+		delay:             rd.Delay.Duration(),
+		delayJitter:       rd.DelayJitter.Duration(),
+		requireClientCert: rd.RequireClientCert,
+		seq:               new(atomic.Uint64),
+		seqSel:            new(atomic.Uint64),
 	}
 	if cr.delay < 0 || cr.delayJitter < 0 {
 		return compiledRoute{}, errors.New("delay and delay_jitter must not be negative")
@@ -926,7 +968,9 @@ func compileMatchRules(match map[string]string) ([]matchRule, error) {
 }
 
 // parseMatchKey splits a dotted match key into its kind and bare key, rejecting
-// any key that is not prefixed with "body.", "query.", or "headers.".
+// any key that is not prefixed with "body.", "query.", "headers.", or "tls.".
+// A "tls." key must additionally name a known client-certificate field (see
+// routeTLSMatchFields) so a typo like tls.common_name fails at load time.
 func parseMatchKey(rawKey string) (matchKind, string, error) {
 	switch {
 	case strings.HasPrefix(rawKey, "body."):
@@ -935,9 +979,17 @@ func parseMatchKey(rawKey string) (matchKind, string, error) {
 		return matchQuery, strings.TrimPrefix(rawKey, "query."), nil
 	case strings.HasPrefix(rawKey, "headers."):
 		return matchHeader, strings.TrimPrefix(rawKey, "headers."), nil
+	case strings.HasPrefix(rawKey, "tls."):
+		key := strings.TrimPrefix(rawKey, "tls.")
+		if _, ok := routeTLSMatchFields[key]; !ok {
+			return 0, "", fmt.Errorf(
+				"invalid match key %q: unknown tls field %q (want one of cn, o, serial, not_before, not_after, fingerprint, issuer_cn, issuer_o)",
+				rawKey, key)
+		}
+		return matchTLS, key, nil
 	default:
-		return 0, "", fmt.Errorf("invalid match key %q: must be prefixed with %q, %q, or %q",
-			rawKey, "body.", "query.", "headers.")
+		return 0, "", fmt.Errorf("invalid match key %q: must be prefixed with %q, %q, %q, or %q",
+			rawKey, "body.", "query.", "headers.", "tls.")
 	}
 }
 
@@ -1095,6 +1147,17 @@ func matchParamPath(segments []string, path string) (map[string]string, bool) {
 // the first satisfied arm's response is served; selectResponse documents the
 // precedence (winning arm > default arm > top-level response > 404).
 func (cr *compiledRoute) serve(w http.ResponseWriter, r *http.Request, params map[string]string, baseDir string, rec MockMetricsRecorder) {
+	// Per-route client-certificate requirement: reject requests that did not
+	// present one (plain HTTP, or optional-client-auth TLS where the client sent
+	// no cert) with a clear 403 before any delay or response selection. A
+	// certificate that WAS presented has already been verified by the TLS layer
+	// (both RequireAndVerifyClientCert and VerifyClientCertIfGiven verify
+	// presented certs during the handshake).
+	if cr.requireClientCert && !clientCertPresented(r.TLS) {
+		writeClientCertRequired(w)
+		return
+	}
+
 	// Per-route delay (fixed + jitter), honoring request cancellation.
 	if d := cr.delay + jitter(cr.delayJitter); d > 0 {
 		t := time.NewTimer(d)
@@ -1400,7 +1463,8 @@ func (mr *matchRule) matches(data map[string]any) bool {
 // parsed JSON object or a form-urlencoded value (first value); nested paths are
 // not supported, and only scalar fields are useful match targets. Query and
 // header keys resolve the first value (header names are canonical-cased,
-// matching buildTemplateData). ok is false when the addressed key is absent.
+// matching buildTemplateData). TLS keys resolve a client-certificate field (see
+// resolveTLSField). ok is false when the addressed key is absent.
 func resolveMatchValue(kind matchKind, key string, data map[string]any) (string, bool) {
 	switch kind {
 	case matchBody:
@@ -1409,9 +1473,28 @@ func resolveMatchValue(kind matchKind, key string, data map[string]any) (string,
 		return lookupStringMap(data["query"], key)
 	case matchHeader:
 		return lookupStringMap(data["headers"], http.CanonicalHeaderKey(key))
+	case matchTLS:
+		return resolveTLSField(data["tls"], key)
 	default:
 		return "", false
 	}
+}
+
+// resolveTLSField resolves a "tls.<field>" match key against the tls section of
+// the template data. ok is false when no client certificate was presented, so a
+// tls rule — including a "*" wildcard — never matches a certless request (the
+// template data's always-populated empty strings are deliberately NOT treated
+// as matchable values here, mirroring how an absent header/query key is
+// ok=false rather than an empty match target).
+func resolveTLSField(tlsData any, key string) (string, bool) {
+	m, ok := tlsData.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if present, _ := m["client_cert_present"].(bool); !present {
+		return "", false
+	}
+	return lookupStringMap(m["client_cert"], key)
 }
 
 // resolveBodyField resolves a top-level field of the parsed request body. The
@@ -1572,7 +1655,8 @@ func jitter(upper time.Duration) time.Duration {
 
 // buildTemplateData assembles the dot-accessible data context shared by both
 // condition matching and response templating: method, path, params, query,
-// headers, and the parsed request body (a JSON value with numbers as
+// headers, the tls section (client-certificate fields, see routeTLSData), and
+// the parsed request body (a JSON value with numbers as
 // json.Number, a form-urlencoded map[string]string of first values, or nil).
 // Because matching and templating read this single parsed body, {{.body.field}}
 // renders exactly the value a condition matches. The request body read is
@@ -1616,8 +1700,75 @@ func buildTemplateData(w http.ResponseWriter, r *http.Request, params map[string
 		"params":  params,
 		"query":   query,
 		"headers": headers,
+		"tls":     routeTLSData(r.TLS),
 		"body":    bodyVal,
 	}, nil
+}
+
+// routeTLSData builds the "tls" section of the template data context. The
+// client_cert map is ALWAYS fully populated — with empty strings when no client
+// certificate was presented — so a template like {{.tls.client_cert.cn}}
+// renders empty rather than erroring (and thus 500ing) on a certless request.
+// The field names mirror echo's clientCertInfo (cn, o, serial, not_before,
+// not_after), with the issuer DN flattened to issuer_cn/issuer_o, the
+// multi-valued Organization reduced to its first entry, and a lowercase-hex
+// SHA-256 fingerprint of the raw DER certificate added. Timestamps use
+// time.RFC3339, matching echo.
+func routeTLSData(state *tls.ConnectionState) map[string]any {
+	cert := map[string]string{
+		"cn":          "",
+		"o":           "",
+		"serial":      "",
+		"not_before":  "",
+		"not_after":   "",
+		"fingerprint": "",
+		"issuer_cn":   "",
+		"issuer_o":    "",
+	}
+	present := clientCertPresented(state)
+	if present {
+		c := state.PeerCertificates[0]
+		sum := sha256.Sum256(c.Raw)
+		cert["cn"] = c.Subject.CommonName
+		cert["o"] = firstListValue(c.Subject.Organization)
+		cert["serial"] = c.SerialNumber.String()
+		cert["not_before"] = c.NotBefore.Format(time.RFC3339)
+		cert["not_after"] = c.NotAfter.Format(time.RFC3339)
+		cert["fingerprint"] = hex.EncodeToString(sum[:])
+		cert["issuer_cn"] = c.Issuer.CommonName
+		cert["issuer_o"] = firstListValue(c.Issuer.Organization)
+	}
+	return map[string]any{
+		"enabled":             state != nil,
+		"client_cert_present": present,
+		"client_cert":         cert,
+	}
+}
+
+// clientCertPresented reports whether the connection presented a client
+// certificate. The nil-first-element guard is defensive (real crypto/tls
+// states never contain nil entries, but synthetic test states might), matching
+// echo's tlsInfo.
+func clientCertPresented(state *tls.ConnectionState) bool {
+	return state != nil && len(state.PeerCertificates) > 0 && state.PeerCertificates[0] != nil
+}
+
+// firstListValue returns the first element of a multi-valued DN attribute list
+// ("" when empty), flattening the x509 Organization field to the single string
+// a template or match rule works with.
+func firstListValue(vals []string) string {
+	if len(vals) == 0 {
+		return ""
+	}
+	return vals[0]
+}
+
+// writeClientCertRequired responds with a 403 and a small JSON error payload
+// for a require_client_cert route hit without a client certificate.
+func writeClientCertRequired(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"error":"client certificate required"}`))
 }
 
 // parseRequestBody decodes a request body for the template/condition data

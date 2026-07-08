@@ -16,6 +16,15 @@ type ServerTLSOptions struct {
 	KeyFile    string // Path to PEM-encoded server private key
 	CAFile     string // Optional: CA cert for client certificate verification
 	ClientAuth bool   // Require client certificates (mTLS)
+
+	// ClientAuthOptional requests client certificates without requiring them:
+	// a presented certificate is verified (against CAFile when set,
+	// crypto/tls.VerifyClientCertIfGiven), but a connection without one is
+	// still accepted at the TLS layer, letting the application enforce
+	// per-route requirements (e.g. mock routes' require_client_cert). It is
+	// ignored when ClientAuth is true — requiring certificates wins.
+	ClientAuthOptional bool
+
 	MinVersion string // Minimum TLS version: "1.2" or "1.3"
 }
 
@@ -97,9 +106,15 @@ func NewServerTLSConfig(cfg ServerTLSOptions) (*cryptotls.Config, error) {
 		tlsConfig.CipherSuites = defaultCipherSuites()
 	}
 
-	// Configure client authentication
-	if cfg.ClientAuth {
-		tlsConfig.ClientAuth = cryptotls.RequireAndVerifyClientCert
+	// Configure client authentication. ClientAuth (require) takes precedence
+	// over ClientAuthOptional (verify-if-given); in both modes a presented
+	// certificate is verified against CAFile when one is configured.
+	if cfg.ClientAuth || cfg.ClientAuthOptional {
+		if cfg.ClientAuth {
+			tlsConfig.ClientAuth = cryptotls.RequireAndVerifyClientCert
+		} else {
+			tlsConfig.ClientAuth = cryptotls.VerifyClientCertIfGiven
+		}
 
 		if cfg.CAFile != "" {
 			caPool, poolErr := loadCACertPool(cfg.CAFile)
