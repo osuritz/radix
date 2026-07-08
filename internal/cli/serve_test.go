@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +183,112 @@ func TestRunServers_RedirectFailureTearsDownMain(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("runServers did not return after redirect serve failure (main not torn down)")
+	}
+}
+
+// TestRunServe_LiveGzipAndCORS starts the real serve command (runServe, not a
+// hand-built server) with gzip and CORS enabled and makes an actual HTTP
+// request, proving the cli layer attaches the configured middleware — the
+// bind-failure tests above only walk the construction lines. Shutdown reuses
+// the command's own signal path: the test sends itself SIGINT, which the main
+// server's handler turns into a graceful shutdown.
+func TestRunServe_LiveGzipAndCORS(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shuts runServe down by signaling the test process, which Windows does not support")
+	}
+
+	dir := t.TempDir()
+	content := strings.Repeat("radix serves static files\n", 20)
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+
+	port := freePort(t)
+	withCfg(t, &config.Config{
+		Port: port,
+		Host: "127.0.0.1",
+		Serve: config.ServeConfig{
+			Dir:   dir,
+			Index: "index.html",
+			Gzip:  true,
+			CORS:  true,
+		},
+		Metrics: config.MetricsConfig{Enabled: false},
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- runServe(serveCmd, nil) }()
+
+	// stop interrupts the process (runServe's main server is the sole SIGINT
+	// owner) and joins the runServe goroutine so the cfg cleanup installed by
+	// withCfg cannot race with it. It returns runServe's error.
+	stop := func() error {
+		proc, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			t.Fatalf("find own process: %v", err)
+		}
+		if err := proc.Signal(os.Interrupt); err != nil {
+			t.Fatalf("send interrupt: %v", err)
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("runServe did not return after interrupt")
+			return nil
+		}
+	}
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	if !waitForServer(addr, 5*time.Second) {
+		err := stop()
+		t.Fatalf("serve server did not become ready (runServe returned %v)", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/", nil)
+	if err != nil {
+		_ = stop()
+		t.Fatalf("new request: %v", err)
+	}
+	// Setting Accept-Encoding explicitly disables the transport's transparent
+	// decompression, so the raw Content-Encoding header stays observable.
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Origin", "http://example.com")
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		_ = stop()
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip (gzip middleware not attached?)", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want * (CORS middleware not attached?)", got)
+	}
+
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		_ = stop()
+		t.Fatalf("response body is not valid gzip: %v", err)
+	}
+	body, err := io.ReadAll(gz)
+	if err != nil {
+		_ = stop()
+		t.Fatalf("read gzipped body: %v", err)
+	}
+	if string(body) != content {
+		t.Errorf("decompressed body = %d bytes, want the %d-byte index.html content", len(body), len(content))
+	}
+
+	if err := stop(); err != nil {
+		t.Errorf("runServe returned error on graceful shutdown: %v", err)
 	}
 }
 
