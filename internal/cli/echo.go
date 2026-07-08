@@ -41,17 +41,12 @@ of that request: method, headers, query, body, client/server info, TLS state,
 and timing. Useful for debugging webhooks and HTTP clients.
 
 Supports response delays, custom status/body/headers, path-based status and
-delay, CORS, TLS, and metrics.
-
-Examples:
-  radix echo                                  # Echo server on :8080
-  radix echo --delay 2s                       # Simulate a slow API
-  radix echo --delay 500ms --delay-jitter 200ms
-  radix echo --status 201                     # Custom status code
-  radix echo --status-from-path              # GET /404 returns 404
-  radix echo --delay-from-path               # GET /delay/500ms delays 500ms
-  radix echo --body '{"message":"OK"}'       # Fixed response body
-  radix echo --tls --cert c.pem --key k.pem  # HTTPS echo`,
+delay, CORS, TLS, and metrics.`,
+	Example: `  radix echo                                  # Echo server on :8080
+  radix echo --delay 500ms --delay-jitter 200ms  # Simulate a slow API
+  radix echo --status-from-path --delay-from-path  # /404 -> 404, /delay/500ms -> 500ms
+  radix echo --body '{"message":"OK"}' --status 201  # Fixed response
+  radix echo --tls --cert ./certs/cert.pem --key ./certs/key.pem`,
 	Args: cobra.NoArgs,
 	RunE: runEcho,
 }

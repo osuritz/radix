@@ -33,16 +33,14 @@ var gencertCmd = &cobra.Command{
 	Long: `Generate self-signed TLS certificates for local HTTPS development.
 
 By default, generates a CA certificate and a server certificate signed by that CA.
-The CA can be imported into your browser or OS trust store to avoid security warnings.
-
-Examples:
-  radix gencert                                    # Generate certs for localhost
-  radix gencert --host localhost,127.0.0.1,myapp   # Multiple hosts/IPs
-  radix gencert --output ./my-certs                # Custom output directory
-  radix gencert --days 730                         # 2-year validity
+The CA can be imported into your browser or OS trust store to avoid security
+warnings; the generated README.txt has per-platform trust-store commands.`,
+	Example: `  radix gencert                                    # Certs for localhost in ./certs
+  radix gencert --host localhost,127.0.0.1,myapp   # Multiple hosts/IPs in the SANs
+  radix gencert --output ./my-certs --days 730     # Custom directory, 2-year validity
   radix gencert --key-type ecdsa --ecdsa-curve P-384
-  radix gencert --ca-cert ./ca.pem --ca-key ./ca-key.pem  # Use existing CA
-  radix gencert --client                           # Generate client certificate`,
+  radix gencert --client --ca-cert ./certs/ca.pem --ca-key ./certs/ca-key.pem \
+    --output ./certs-client                        # Client cert from an existing CA`,
 	RunE: runGencert,
 }
 
@@ -67,13 +65,13 @@ func runGencert(cmd *cobra.Command, _ []string) error {
 	// Parse hosts
 	hosts := parseHosts(gencertHosts)
 	if len(hosts) == 0 {
-		return fmt.Errorf("at least one host is required")
+		return fmt.Errorf("--host must name at least one hostname or IP (e.g. --host localhost,127.0.0.1)")
 	}
 
 	// Validate key type
 	keyType := tls.KeyType(strings.ToLower(gencertKeyType))
 	if keyType != tls.KeyTypeRSA && keyType != tls.KeyTypeECDSA {
-		return fmt.Errorf("unsupported key type %q: must be rsa or ecdsa", gencertKeyType)
+		return fmt.Errorf("unsupported key type %q for --key-type: must be rsa or ecdsa", gencertKeyType)
 	}
 
 	// Validate ECDSA curve
@@ -83,7 +81,7 @@ func runGencert(cmd *cobra.Command, _ []string) error {
 		case tls.CurveP256, tls.CurveP384, tls.CurveP521:
 			// valid
 		default:
-			return fmt.Errorf("unsupported ECDSA curve %q: must be P-256, P-384, or P-521", gencertECDSACurve)
+			return fmt.Errorf("unsupported ECDSA curve %q for --ecdsa-curve: must be P-256, P-384, or P-521", gencertECDSACurve)
 		}
 	}
 
@@ -93,13 +91,13 @@ func runGencert(cmd *cobra.Command, _ []string) error {
 		case 2048, 4096:
 			// valid
 		default:
-			return fmt.Errorf("unsupported RSA key size %d: must be 2048 or 4096", gencertKeySize)
+			return fmt.Errorf("unsupported RSA key size %d for --key-size: must be 2048 or 4096", gencertKeySize)
 		}
 	}
 
 	// Validate days
 	if gencertDays <= 0 {
-		return fmt.Errorf("certificate validity must be positive, got %d", gencertDays)
+		return fmt.Errorf("invalid --days %d: certificate validity must be positive", gencertDays)
 	}
 
 	// Validate that ca-cert and ca-key are both provided or both absent
@@ -215,12 +213,12 @@ func resolveCA(out io.Writer, certCfg *tls.CertConfig, outputDir string, keyType
 		// #nosec G304 - CA cert path is user-provided via CLI flag
 		caCertPEM, err := os.ReadFile(gencertCACert)
 		if err != nil {
-			return nil, false, fmt.Errorf("reading CA certificate: %w", err)
+			return nil, false, fmt.Errorf("reading CA certificate from --ca-cert: %w", err)
 		}
 		// #nosec G304 - CA key path is user-provided via CLI flag
 		caKeyPEM, err := os.ReadFile(gencertCAKey)
 		if err != nil {
-			return nil, false, fmt.Errorf("reading CA private key: %w", err)
+			return nil, false, fmt.Errorf("reading CA private key from --ca-key: %w", err)
 		}
 
 		caCert := &tls.Certificate{CertPEM: caCertPEM, KeyPEM: caKeyPEM}

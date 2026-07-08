@@ -41,15 +41,14 @@ var rootCmd = &cobra.Command{
 It provides static file serving, reverse proxy, request echo, and API mocking
 capabilities—all running locally with no external services or data leakage.
 
-Examples:
-  radix serve                    # Serve current directory
-  radix serve --dir ./dist --spa # Serve SPA with routing
-  radix proxy --target http://localhost:3000
+Run "radix <command> --help" for details on any command.`,
+	Example: `  radix serve                    # Serve current directory
+  radix serve ./dist --spa       # Serve an SPA with client-side routing
+  radix proxy http://localhost:3000
   radix echo --delay 2s          # Echo server with delay
-  radix mock --routes ./api.yml  # Mock API server
-  radix gencert --host localhost # Generate TLS certificates
-  radix version                  # Show version information
-  radix validate ./radix.yml     # Validate configuration`,
+  radix mock --routes ./api.yml  # Mock API server with custom routes
+  radix gencert                  # Generate local TLS certificates
+  radix validate ./radix.yml     # Validate a configuration file`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {

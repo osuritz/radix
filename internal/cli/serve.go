@@ -35,15 +35,13 @@ var serveCmd = &cobra.Command{
 	Short: "Serve static files over HTTP",
 	Long: `Serve static files from a directory over HTTP(S).
 
-Supports SPA routing, CORS headers, gzip compression, TLS,
-directory listing, and metrics.
-
-Examples:
-  radix serve                          # Serve current directory on :8080
-  radix serve ./dist                   # Serve ./dist directory
-  radix serve --spa --port 3000        # SPA mode on port 3000
-  radix serve --cors --gzip            # Enable CORS and gzip
-  radix serve --tls --cert c.pem --key k.pem  # HTTPS`,
+The directory can be given positionally or with --dir (default: current
+directory). Supports SPA fallback routing, CORS headers, gzip compression,
+Cache-Control, TLS with optional HTTP->HTTPS redirect and HSTS, and metrics.`,
+	Example: `  radix serve                                  # Serve current directory on :8080
+  radix serve ./dist --spa --port 3000         # SPA with client-side routing
+  radix serve ./public --cors --gzip --cache "max-age=3600"
+  radix serve ./public --tls --cert ./certs/cert.pem --key ./certs/key.pem`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runServe,
 }
@@ -51,7 +49,7 @@ Examples:
 func init() {
 	serveCmd.Flags().StringVarP(&serveDir, "dir", "d", "", "directory to serve (default: current directory)")
 	serveCmd.Flags().StringVar(&serveIndex, "index", "", "index file name (default: index.html)")
-	serveCmd.Flags().BoolVar(&serveSPA, "spa", false, "single page application mode")
+	serveCmd.Flags().BoolVar(&serveSPA, "spa", false, "single-page application mode (serve the index for unknown paths)")
 	serveCmd.Flags().BoolVar(&serveCORS, "cors", false, "enable CORS headers")
 	serveCmd.Flags().BoolVar(&serveGzip, "gzip", false, "enable gzip compression")
 	serveCmd.Flags().StringVar(&serveCache, "cache", "", "Cache-Control header value")
@@ -112,15 +110,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Resolve directory to absolute path
 	dir, err := filepath.Abs(cfg.Serve.Dir)
 	if err != nil {
-		return fmt.Errorf("invalid directory path: %w", err)
+		return fmt.Errorf("invalid directory path %q: %w", cfg.Serve.Dir, err)
 	}
 
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("directory does not exist: %s", dir)
+			return fmt.Errorf("directory does not exist: %s (pass a directory positionally or with --dir)", dir)
 		}
-		return fmt.Errorf("cannot access directory: %w", err)
+		return fmt.Errorf("cannot access directory %s: %w", dir, err)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("not a directory: %s", dir)

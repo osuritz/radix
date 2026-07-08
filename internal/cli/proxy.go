@@ -36,27 +36,25 @@ var proxyCmd = &cobra.Command{
 	Short: "Reverse proxy to a backend server",
 	Long: `Start a reverse proxy server that forwards requests to a backend target.
 
-Supports path rewriting, prefix stripping, header injection, CORS,
-TLS termination, and backend TLS (including mTLS).
-
-Examples:
-  radix proxy http://localhost:3000          # Proxy to local backend
-  radix proxy --target http://api.local:8000 # Same, using --target flag
-  radix proxy http://localhost:3000 --cors   # Enable CORS headers
-  radix proxy http://localhost:3000 --strip-prefix /api
+The target can be given positionally or with --target. Supports path
+rewriting, prefix stripping, request-header injection (with per-request
+${env:NAME} and ${keychain:SERVICE/ACCOUNT} secret resolution), CORS,
+TLS termination, and backend TLS (including mTLS via the config file).`,
+	Example: `  radix proxy http://localhost:3000            # Proxy :8080 to a local backend
+  radix proxy http://localhost:3000 --strip-prefix /api --cors
   radix proxy http://localhost:3000 --rewrite /v1:/v2
-  radix proxy https://backend:443 --tls-skip-verify
-  radix proxy http://localhost:3000 --header "X-Custom: value"
-  radix proxy http://localhost:3000 --tls --cert c.pem --key k.pem`,
+  radix proxy https://backend.internal --tls-skip-verify
+  radix proxy http://localhost:3000 --header "Authorization: Bearer ${keychain:work-cli/jwt}"
+  radix proxy http://localhost:3000 --tls --cert ./certs/cert.pem --key ./certs/key.pem`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProxy,
 }
 
 func init() {
-	proxyCmd.Flags().StringVar(&proxyTarget, "target", "", "backend target URL (e.g., http://localhost:3000)")
+	proxyCmd.Flags().StringVar(&proxyTarget, "target", "", "backend target URL (e.g. http://localhost:3000)")
 	proxyCmd.Flags().StringVar(&proxyRewrite, "rewrite", "", "path rewrite rule (from:to format)")
 	proxyCmd.Flags().StringVar(&proxyStripPrefix, "strip-prefix", "", "strip path prefix before forwarding")
-	proxyCmd.Flags().StringVar(&proxyTimeout, "timeout", "", "backend response timeout (e.g., 30s, 1m)")
+	proxyCmd.Flags().StringVar(&proxyTimeout, "timeout", "", "backend response timeout (e.g. 30s, 1m)")
 	proxyCmd.Flags().DurationVar(&proxyFlushInterval, "flush-interval", -1*time.Nanosecond,
 		"response flush interval for streaming; negative (e.g. -1ns) flushes immediately, 0 uses default (default -1ns)")
 	proxyCmd.Flags().BoolVar(&proxyWebSocket, "websocket", false, "enable explicit WebSocket support")
@@ -129,7 +127,7 @@ func runProxy(cmd *cobra.Command, args []string) error {
 
 	// Validate target
 	if cfg.Proxy.Target == "" {
-		return fmt.Errorf("target URL is required (use positional arg or --target flag)")
+		return fmt.Errorf("target URL is required: pass it positionally or with --target (e.g. radix proxy http://localhost:3000)")
 	}
 
 	targetURL, err := url.Parse(cfg.Proxy.Target)
