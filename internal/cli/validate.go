@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/osuritz/radix/internal/config"
+	"github.com/osuritz/radix/internal/server"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -21,14 +22,15 @@ var validateCmd = &cobra.Command{
 	Short: "Validate configuration files",
 	Long: `Validate configuration files for syntax and correctness.
 
-Checks YAML/JSON syntax, validates schema, verifies file paths exist,
-validates port ranges, and checks TLS certificate paths.
-
-Examples:
-  radix validate                    # Validate ./radix.yml
-  radix validate ./custom.yml       # Validate specific file
-  radix validate --strict           # Fail on warnings
-  radix validate -c ./radix.yml     # Using --config flag`,
+Checks YAML syntax, validates schema, verifies file paths exist,
+validates port ranges, and checks TLS certificate paths. Non-fatal
+issues are reported as warnings; --strict turns warnings into failures.`,
+	Example: `  radix validate                    # Validate ./radix.yml
+  radix validate ./custom.yml       # Validate a specific file
+  radix validate ./radix.yml --strict  # Fail on warnings too
+  radix validate -c ./radix.yml     # Using the --config flag
+  radix validate ./mock-routes.yml  # Routes files are auto-detected
+  radix validate ./routes.yml --type mock-routes  # Force mock-routes mode`,
 	RunE: runValidate,
 }
 
@@ -38,6 +40,13 @@ func init() {
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
+	// Validate the --type value up front so a typo fails before any file I/O.
+	switch configType {
+	case "auto", "main", "mock-routes":
+	default:
+		return fmt.Errorf("invalid --type %q (must be \"main\", \"mock-routes\", or \"auto\")", configType)
+	}
+
 	// Determine config file to validate
 	configPath := cfgFile
 	if len(args) > 0 {
@@ -54,7 +63,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
+		return fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Validating configuration: %s\n\n", absPath)
 
@@ -62,7 +71,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	// #nosec G304 - config file path is user-provided and validated
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
+		return fmt.Errorf("failed to read config file %s: %w", absPath, err)
 	}
 
 	// Parse YAML
@@ -71,6 +80,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("✗ Syntax error: %w", unmarshalErr)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
+
+	// Branch on the config type. --type forces the mode; auto-detect treats a
+	// file whose top level carries the mock-routes schema keys (routes/settings)
+	// as a routes file. Without this, validating a mock-routes file as a main
+	// config would false-positively pass: viper silently ignores unknown keys.
+	if resolveConfigType(rawConfig) == "mock-routes" {
+		return validateMockRoutes(cmd, absPath, data)
+	}
 
 	// Load config through Viper to validate structure
 	loadedCfg, err := config.Load(absPath)
@@ -134,11 +151,64 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		}
 
 		if strictMode {
-			return fmt.Errorf("validation failed in strict mode due to warnings")
+			return fmt.Errorf("validation failed: --strict treats the %d warning(s) above as errors", len(warnings))
 		}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Configuration is valid: %s\n", absPath)
+	return nil
+}
+
+// resolveConfigType decides which schema a parsed YAML document should be
+// validated against. An explicit --type (main / mock-routes) wins; in auto
+// mode a document whose top level contains a `routes` or `settings` key — the
+// two top-level keys of the mock-routes schema (see server.RoutesFile) — is a
+// mock-routes file, and anything else is a main config.
+func resolveConfigType(rawConfig map[string]interface{}) string {
+	if configType != "auto" {
+		return configType
+	}
+	if _, ok := rawConfig["routes"]; ok {
+		return "mock-routes"
+	}
+	if _, ok := rawConfig["settings"]; ok {
+		return "mock-routes"
+	}
+	return "main"
+}
+
+// validateMockRoutes validates data as a mock-routes file by compiling it with
+// the same loader the mock command uses (server.CompileRoutes), so validation
+// and runtime agree exactly: route paths, methods, regex patterns, templates,
+// conditions, selectors, and settings are all checked. File-backed response
+// bodies are resolved relative to the routes file's directory, matching
+// server.LoadRoutes.
+func validateMockRoutes(cmd *cobra.Command, absPath string, data []byte) error {
+	compiled, err := server.CompileRoutes(data, filepath.Dir(absPath))
+	if err != nil {
+		return fmt.Errorf("✗ Routes: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Routes: %d compiled\n", compiled.RouteCount())
+
+	// The compiler is strict (any real problem is an error above); the only
+	// advisory case is a file that compiles but defines no routes.
+	warnings := []string{}
+	if compiled.RouteCount() == 0 {
+		warnings = append(warnings, "No routes defined (the file compiles but matches no requests)")
+	}
+
+	if len(warnings) > 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
+		for _, warning := range warnings {
+			fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
+		}
+
+		if strictMode {
+			return fmt.Errorf("validation failed: --strict treats the %d warning(s) above as errors", len(warnings))
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Mock routes file is valid: %s\n", absPath)
 	return nil
 }
 
