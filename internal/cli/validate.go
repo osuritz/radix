@@ -82,9 +82,9 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), "✓ Syntax: OK")
 
 	// Branch on the config type. --type forces the mode; auto-detect treats a
-	// file whose top level carries the mock-routes schema keys (routes/settings)
-	// as a routes file. Without this, validating a mock-routes file as a main
-	// config would false-positively pass: viper silently ignores unknown keys.
+	// file whose top level carries the mock-routes `routes` key as a routes
+	// file. Without this, validating a mock-routes file as a main config would
+	// false-positively pass: viper silently ignores unknown keys.
 	if resolveConfigType(rawConfig) == "mock-routes" {
 		return validateMockRoutes(cmd, absPath, data)
 	}
@@ -144,15 +144,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print warnings
-	if len(warnings) > 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
-		for _, warning := range warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
-		}
-
-		if strictMode {
-			return fmt.Errorf("validation failed: --strict treats the %d warning(s) above as errors", len(warnings))
-		}
+	if err := reportWarnings(cmd, warnings, strictMode); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Configuration is valid: %s\n", absPath)
@@ -161,17 +154,15 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 // resolveConfigType decides which schema a parsed YAML document should be
 // validated against. An explicit --type (main / mock-routes) wins; in auto
-// mode a document whose top level contains a `routes` or `settings` key — the
-// two top-level keys of the mock-routes schema (see server.RoutesFile) — is a
-// mock-routes file, and anything else is a main config.
+// mode detection is delegated to server.IsRoutesDocument, which keys on the
+// top-level `routes` key only (a `settings` key alone is ambiguous — a main
+// config may carry a stray one). A settings-only routes file can still be
+// validated explicitly with --type mock-routes.
 func resolveConfigType(rawConfig map[string]interface{}) string {
 	if configType != "auto" {
 		return configType
 	}
-	if _, ok := rawConfig["routes"]; ok {
-		return "mock-routes"
-	}
-	if _, ok := rawConfig["settings"]; ok {
+	if server.IsRoutesDocument(rawConfig) {
 		return "mock-routes"
 	}
 	return "main"
@@ -190,6 +181,13 @@ func validateMockRoutes(cmd *cobra.Command, absPath string, data []byte) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ Routes: %d compiled\n", compiled.RouteCount())
 
+	// Apply the same settings range checks runMock enforces at startup (with no
+	// CLI flags set, the file's settings ARE the effective settings), so a file
+	// that validates here cannot be refused by `radix mock`.
+	if err := validateEffectiveSettings(compiled.Settings()); err != nil {
+		return fmt.Errorf("✗ Settings: %w", err)
+	}
+
 	// The compiler is strict (any real problem is an error above); the only
 	// advisory case is a file that compiles but defines no routes.
 	warnings := []string{}
@@ -197,18 +195,29 @@ func validateMockRoutes(cmd *cobra.Command, absPath string, data []byte) error {
 		warnings = append(warnings, "No routes defined (the file compiles but matches no requests)")
 	}
 
-	if len(warnings) > 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
-		for _, warning := range warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
-		}
-
-		if strictMode {
-			return fmt.Errorf("validation failed: --strict treats the %d warning(s) above as errors", len(warnings))
-		}
+	if err := reportWarnings(cmd, warnings, strictMode); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Mock routes file is valid: %s\n", absPath)
+	return nil
+}
+
+// reportWarnings prints the shared warnings block used by both the main-config
+// and mock-routes validation paths and, when strict is set, converts the
+// warnings into a validation error. It is a no-op returning nil when there are
+// no warnings.
+func reportWarnings(cmd *cobra.Command, warnings []string, strict bool) error {
+	if len(warnings) == 0 {
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "\nWarnings:")
+	for _, warning := range warnings {
+		fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ %s\n", warning)
+	}
+	if strict {
+		return fmt.Errorf("validation failed: --strict treats the %d warning(s) above as errors", len(warnings))
+	}
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"crypto/sha1" //nolint:gosec // sha1 is offered only for non-security mock fixture generation, never for auth/integrity.
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -106,6 +107,17 @@ const (
 type RoutesFile struct {
 	Settings settingsYAML   `yaml:"settings"`
 	Routes   []RouteDefYAML `yaml:"routes"`
+}
+
+// IsRoutesDocument reports whether a parsed YAML document carries the
+// mock-routes schema (RoutesFile) rather than a main radix config. Detection
+// keys on the top-level `routes` key ONLY: `settings` alone is ambiguous — a
+// main config with a stray top-level `settings:` block must not be mistaken
+// for a routes file — so a settings-only routes file has to be validated
+// explicitly (e.g. `radix validate --type mock-routes`).
+func IsRoutesDocument(raw map[string]any) bool {
+	_, ok := raw["routes"]
+	return ok
 }
 
 // settingsYAML is the on-disk schema for the global `settings:` block. Every
@@ -334,21 +346,58 @@ const (
 	matchTLS                     // tls.<field> (client-certificate field)
 )
 
-// routeTLSMatchFields is the set of client-certificate fields a condition may
-// match via the "tls." prefix (e.g. `tls.cn: service-a`). The names mirror the
-// client_cert template data map built by routeTLSData, so a field a template
-// can render is also a field a condition can match. An unknown field is a
-// load-time error (see parseMatchKey).
-var routeTLSMatchFields = map[string]struct{}{
-	"cn":          {},
-	"o":           {},
-	"serial":      {},
-	"not_before":  {},
-	"not_after":   {},
-	"fingerprint": {},
-	"issuer_cn":   {},
-	"issuer_o":    {},
+// routeTLSField is one client-certificate field exposed to routes: name is the
+// key used both as a "tls.<name>" condition match key and as the
+// {{.tls.client_cert.<name>}} template data key; extract pulls the field's
+// string value from a presented certificate.
+type routeTLSField struct {
+	name    string
+	extract func(*x509.Certificate) string
 }
+
+// routeTLSFields is THE ordered list of client-certificate fields available to
+// custom routes. It is the single source of truth from which the condition
+// match-field set (routeTLSMatchFields), the parseMatchKey error message
+// (routeTLSFieldNames), and the template data map (routeTLSData) are all
+// derived, so adding a field here makes it matchable and renderable at once.
+//
+// The names mirror echo's clientCertInfo (cn, o, serial, not_before,
+// not_after), with the issuer DN flattened to issuer_cn/issuer_o, the
+// multi-valued Organization reduced to its first entry, and a lowercase-hex
+// SHA-256 fingerprint of the raw DER certificate added. Timestamps use
+// time.RFC3339, matching echo.
+var routeTLSFields = []routeTLSField{
+	{"cn", func(c *x509.Certificate) string { return c.Subject.CommonName }},
+	{"o", func(c *x509.Certificate) string { return firstListValue(c.Subject.Organization) }},
+	{"serial", certSerial},
+	{"not_before", func(c *x509.Certificate) string { return certTimeRFC3339(c.NotBefore) }},
+	{"not_after", func(c *x509.Certificate) string { return certTimeRFC3339(c.NotAfter) }},
+	{"fingerprint", certFingerprint},
+	{"issuer_cn", func(c *x509.Certificate) string { return c.Issuer.CommonName }},
+	{"issuer_o", func(c *x509.Certificate) string { return firstListValue(c.Issuer.Organization) }},
+}
+
+// routeTLSMatchFields is the set of client-certificate fields a condition may
+// match via the "tls." prefix (e.g. `tls.cn: service-a`), derived from
+// routeTLSFields so a field a template can render is also a field a condition
+// can match. An unknown field is a load-time error (see parseMatchKey).
+var routeTLSMatchFields = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(routeTLSFields))
+	for _, f := range routeTLSFields {
+		m[f.name] = struct{}{}
+	}
+	return m
+}()
+
+// routeTLSFieldNames is the comma-separated field list used in parseMatchKey's
+// unknown-field error, derived from routeTLSFields in declaration order.
+var routeTLSFieldNames = func() string {
+	names := make([]string, len(routeTLSFields))
+	for i, f := range routeTLSFields {
+		names[i] = f.name
+	}
+	return strings.Join(names, ", ")
+}()
 
 // matchRule is one compiled "body.x: value" / "query.x: value" /
 // "headers.X: value" entry. wildcard is true when the YAML value was "*",
@@ -462,6 +511,29 @@ func (c *CompiledRoutes) Settings() RouteSettings {
 // report on a loaded routes file (e.g. `radix validate` for a mock-routes file).
 func (c *CompiledRoutes) RouteCount() int {
 	return len(c.routes)
+}
+
+// HasClientCertRequirements reports whether any compiled route depends on a
+// TLS client certificate: a `require_client_cert: true` route or a condition
+// arm with a "tls."-prefixed match rule. Callers use it to warn at startup
+// when such routes exist but the effective TLS mode will never request a
+// client certificate (plain HTTP, or TLS without client auth), which would
+// make those routes 403 or never match for every request.
+func (c *CompiledRoutes) HasClientCertRequirements() bool {
+	for i := range c.routes {
+		cr := &c.routes[i]
+		if cr.requireClientCert {
+			return true
+		}
+		for j := range cr.conditions {
+			for k := range cr.conditions[j].rules {
+				if cr.conditions[j].rules[k].kind == matchTLS {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // LoadRoutes reads and compiles a routes file from disk. The returned
@@ -983,8 +1055,8 @@ func parseMatchKey(rawKey string) (matchKind, string, error) {
 		key := strings.TrimPrefix(rawKey, "tls.")
 		if _, ok := routeTLSMatchFields[key]; !ok {
 			return 0, "", fmt.Errorf(
-				"invalid match key %q: unknown tls field %q (want one of cn, o, serial, not_before, not_after, fingerprint, issuer_cn, issuer_o)",
-				rawKey, key)
+				"invalid match key %q: unknown tls field %q (want one of %s)",
+				rawKey, key, routeTLSFieldNames)
 		}
 		return matchTLS, key, nil
 	default:
@@ -1705,44 +1777,78 @@ func buildTemplateData(w http.ResponseWriter, r *http.Request, params map[string
 	}, nil
 }
 
-// routeTLSData builds the "tls" section of the template data context. The
-// client_cert map is ALWAYS fully populated — with empty strings when no client
-// certificate was presented — so a template like {{.tls.client_cert.cn}}
-// renders empty rather than erroring (and thus 500ing) on a certless request.
-// The field names mirror echo's clientCertInfo (cn, o, serial, not_before,
-// not_after), with the issuer DN flattened to issuer_cn/issuer_o, the
-// multi-valued Organization reduced to its first entry, and a lowercase-hex
-// SHA-256 fingerprint of the raw DER certificate added. Timestamps use
-// time.RFC3339, matching echo.
-func routeTLSData(state *tls.ConnectionState) map[string]any {
-	cert := map[string]string{
-		"cn":          "",
-		"o":           "",
-		"serial":      "",
-		"not_before":  "",
-		"not_after":   "",
-		"fingerprint": "",
-		"issuer_cn":   "",
-		"issuer_o":    "",
+// routeTLSEmptyCert, routeTLSDataNoTLS, and routeTLSDataNoCert are the shared,
+// prebuilt "tls" template data values for the two certless cases (plain HTTP
+// and TLS without a presented client certificate). The client_cert map is
+// ALWAYS fully populated — with empty strings when no client certificate was
+// presented — so a template like {{.tls.client_cert.cn}} renders empty rather
+// than erroring (and thus 500ing) on a certless request. These values are
+// constant per process, so routeTLSData returns them as-is instead of
+// rebuilding identical maps per request; they must never be mutated (condition
+// matching and text/template only read them).
+var (
+	routeTLSEmptyCert = func() map[string]string {
+		m := make(map[string]string, len(routeTLSFields))
+		for _, f := range routeTLSFields {
+			m[f.name] = ""
+		}
+		return m
+	}()
+	routeTLSDataNoTLS = map[string]any{
+		"enabled":             false,
+		"client_cert_present": false,
+		"client_cert":         routeTLSEmptyCert,
 	}
-	present := clientCertPresented(state)
-	if present {
-		c := state.PeerCertificates[0]
-		sum := sha256.Sum256(c.Raw)
-		cert["cn"] = c.Subject.CommonName
-		cert["o"] = firstListValue(c.Subject.Organization)
-		cert["serial"] = c.SerialNumber.String()
-		cert["not_before"] = c.NotBefore.Format(time.RFC3339)
-		cert["not_after"] = c.NotAfter.Format(time.RFC3339)
-		cert["fingerprint"] = hex.EncodeToString(sum[:])
-		cert["issuer_cn"] = c.Issuer.CommonName
-		cert["issuer_o"] = firstListValue(c.Issuer.Organization)
+	routeTLSDataNoCert = map[string]any{
+		"enabled":             true,
+		"client_cert_present": false,
+		"client_cert":         routeTLSEmptyCert,
+	}
+)
+
+// routeTLSData builds the "tls" section of the template data context. The
+// certless cases return the shared prebuilt values above; when a client
+// certificate was presented the client_cert map is populated field by field
+// from routeTLSFields (the single source of truth for field names and value
+// extraction).
+func routeTLSData(state *tls.ConnectionState) map[string]any {
+	if !clientCertPresented(state) {
+		if state == nil {
+			return routeTLSDataNoTLS
+		}
+		return routeTLSDataNoCert
+	}
+	c := state.PeerCertificates[0]
+	cert := make(map[string]string, len(routeTLSFields))
+	for _, f := range routeTLSFields {
+		cert[f.name] = f.extract(c)
 	}
 	return map[string]any{
-		"enabled":             state != nil,
-		"client_cert_present": present,
+		"enabled":             true,
+		"client_cert_present": true,
 		"client_cert":         cert,
 	}
+}
+
+// certSerial renders a certificate's serial number as its decimal string. It
+// is shared by the mock routes' tls template data (routeTLSFields) and echo's
+// clientCertInfo so both surfaces always agree on the representation.
+func certSerial(c *x509.Certificate) string {
+	return c.SerialNumber.String()
+}
+
+// certTimeRFC3339 formats a certificate validity timestamp as RFC3339 (second
+// precision, the natural granularity for NotBefore/NotAfter). Shared by
+// routeTLSFields and echo's clientCertInfo.
+func certTimeRFC3339(t time.Time) string {
+	return t.Format(time.RFC3339)
+}
+
+// certFingerprint returns the lowercase-hex SHA-256 fingerprint of the raw DER
+// certificate.
+func certFingerprint(c *x509.Certificate) string {
+	sum := sha256.Sum256(c.Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // clientCertPresented reports whether the connection presented a client

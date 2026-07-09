@@ -76,10 +76,48 @@ routes:
 			wantOutput: "✓ Routes: 1 compiled",
 		},
 		{
-			name: "settings-only file detected as mock-routes",
+			// A `settings` key alone must NOT trigger routes-file detection: a
+			// main config can carry a stray top-level settings block, and
+			// misrouting it would skip every main-config check. Settings-only
+			// routes files are validated explicitly via --type mock-routes.
+			name: "settings-only file detected as main config",
 			yaml: `
 settings:
   latency: 0
+`,
+			wantOutput: "✓ Configuration is valid",
+		},
+		{
+			name: "main config with stray settings block still gets main-config validation",
+			yaml: `
+port: 99999
+settings:
+  latency: 0
+`,
+			wantErr: "✗ Invalid port: 99999",
+		},
+		{
+			name: "routes file with out-of-range fail_rate fails settings check",
+			yaml: `
+settings:
+  fail_rate: 250
+routes:
+  - path: /api/health
+    response:
+      status: 200
+`,
+			wantErr: "✗ Settings:",
+		},
+		{
+			name: "routes file with valid settings passes",
+			yaml: `
+settings:
+  fail_rate: 25
+  fail_status: 503
+routes:
+  - path: /api/health
+    response:
+      status: 200
 `,
 			wantOutput: "✓ Mock routes file is valid",
 		},
@@ -150,8 +188,23 @@ routes:
 	}
 }
 
+func TestValidateType_ForceMockRoutesSettingsOnly(t *testing.T) {
+	// A settings-only routes file is no longer auto-detected (a `settings` key
+	// alone is ambiguous with a main config), but --type mock-routes must still
+	// validate it down the routes path.
+	path := writeTempYAML(t, "settings-only.yml", "settings:\n  latency: 50ms\n")
+
+	out, err := runValidateTyped(t, path, "mock-routes", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "✓ Mock routes file is valid") {
+		t.Errorf("output = %q, want mock-routes success line", out)
+	}
+}
+
 func TestValidateType_ForceMockRoutes(t *testing.T) {
-	// No routes/settings key, so auto-detect would treat this as a main config;
+	// No routes key, so auto-detect would treat this as a main config;
 	// --type mock-routes must force the routes path (compiling zero routes).
 	path := writeTempYAML(t, "empty.yml", "# nothing here\n")
 
