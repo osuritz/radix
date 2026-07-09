@@ -259,13 +259,16 @@ func TestResolveRoutesArg(t *testing.T) {
 }
 
 func TestMockCmd_OptionalClientAuthValidation(t *testing.T) {
+	// The checks read the post-merge config (cfg.TLS.ClientAuthOptional), so
+	// config-file/env users hit the same validations as --optional-client-auth
+	// flag users.
 	oldCfg := cfg
-	oldOpt := mockOptionalClientAuth
-	defer func() { cfg = oldCfg; mockOptionalClientAuth = oldOpt }()
+	defer func() { cfg = oldCfg }()
 
 	t.Run("requires --tls", func(t *testing.T) {
-		cfg = newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
-		mockOptionalClientAuth = true
+		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
+		c.TLS = config.TLSConfig{ClientAuthOptional: true}
+		cfg = c
 
 		err := runMock(mockCmd, nil)
 		if err == nil {
@@ -278,9 +281,8 @@ func TestMockCmd_OptionalClientAuthValidation(t *testing.T) {
 
 	t.Run("conflicts with --client-auth", func(t *testing.T) {
 		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
-		c.TLS = config.TLSConfig{Enabled: true, ClientAuth: true}
+		c.TLS = config.TLSConfig{Enabled: true, ClientAuth: true, ClientAuthOptional: true}
 		cfg = c
-		mockOptionalClientAuth = true
 
 		err := runMock(mockCmd, nil)
 		if err == nil {
@@ -295,9 +297,8 @@ func TestMockCmd_OptionalClientAuthValidation(t *testing.T) {
 		// Without a client CA, Go would fall back to the system root store for
 		// client-cert verification; that misconfiguration must be rejected.
 		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
-		c.TLS = config.TLSConfig{Enabled: true}
+		c.TLS = config.TLSConfig{Enabled: true, ClientAuthOptional: true}
 		cfg = c
-		mockOptionalClientAuth = true
 
 		err := runMock(mockCmd, nil)
 		if err == nil {

@@ -120,6 +120,13 @@ func applyMockFlags(cmd *cobra.Command) {
 	if cmd.Flags().Changed("watch") {
 		cfg.Mock.Watch = mockWatch
 	}
+	// --optional-client-auth is mock-only, so its TLS config override lives
+	// here rather than with the persistent TLS flags in the root command. The
+	// tls.client_auth_optional key remains available to all server commands
+	// via config file or environment.
+	if cmd.Flags().Changed("optional-client-auth") {
+		cfg.TLS.ClientAuthOptional = mockOptionalClientAuth
+	}
 }
 
 func runMock(cmd *cobra.Command, args []string) error {
@@ -148,16 +155,18 @@ func runMock(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// --optional-client-auth requests (but does not require) a client
-	// certificate so per-route require_client_cert rules can decide. It only
-	// makes sense over TLS, and combining it with the stricter global
-	// --client-auth (which already rejects certless connections at the TLS
-	// layer) is ambiguous, so both misuses are rejected up front. A client CA
-	// (--ca) is required too: without one Go would verify presented
-	// certificates against the SYSTEM root store, silently rejecting the
-	// user's own gencert client certs while accepting any WebPKI clientAuth
-	// certificate.
-	if mockOptionalClientAuth {
+	// Optional client auth (--optional-client-auth or tls.client_auth_optional)
+	// requests (but does not require) a client certificate so per-route
+	// require_client_cert rules can decide. It only makes sense over TLS, and
+	// combining it with the stricter global --client-auth (which already
+	// rejects certless connections at the TLS layer) is ambiguous, so both
+	// misuses are rejected up front. A client CA (--ca) is required too:
+	// without one Go would verify presented certificates against the SYSTEM
+	// root store, silently rejecting the user's own gencert client certs while
+	// accepting any WebPKI clientAuth certificate. These checks read the
+	// post-merge config, so config-file/env users get the same friendly errors
+	// as flag users (the TLS loader enforces the same invariants as a backstop).
+	if cfg.TLS.ClientAuthOptional {
 		if !cfg.TLS.Enabled {
 			return errors.New("--optional-client-auth requires --tls")
 		}
@@ -215,6 +224,12 @@ func runMock(cmd *cobra.Command, args []string) error {
 			return vErr
 		}
 		routesStore = store
+
+		// The effective TLS mode is fully merged at this point (applyMockFlags ran
+		// first), so warn now if the loaded routes depend on a client certificate
+		// the TLS layer will never request. Warning only — hot reload can change
+		// the routes, so the server still starts.
+		warnUnreachableClientCertRoutes(cmd, store.Load())
 	}
 
 	mockCfg := server.MockConfig{
@@ -312,17 +327,47 @@ func runMock(cmd *cobra.Command, args []string) error {
 	return runServers(ctx, srv, admin)
 }
 
+// warnUnreachableClientCertRoutes prints a startup warning to the command's
+// error stream when the compiled routes contain require_client_cert or tls.*
+// match conditions but the effective TLS mode will never request a client
+// certificate — plain HTTP, or --tls without --client-auth /
+// --optional-client-auth. In that combination every request hits a
+// require_client_cert route as certless (a permanent 403) and tls.* conditions
+// never match, which otherwise looks like a broken client. It only warns (the
+// server still starts): a hot reload can change the routes, and the diagnostic
+// is what turns the silent 403s into an actionable message.
+func warnUnreachableClientCertRoutes(cmd *cobra.Command, compiled *server.CompiledRoutes) {
+	if compiled == nil || !compiled.HasClientCertRequirements() {
+		return
+	}
+	// A client certificate is requested only over TLS with client auth enabled
+	// (required via --client-auth or requested via --optional-client-auth).
+	if cfg.TLS.Enabled && (cfg.TLS.ClientAuth || cfg.TLS.ClientAuthOptional) {
+		return
+	}
+	reason := "the server is plain HTTP and never requests one"
+	if cfg.TLS.Enabled {
+		reason = "TLS is enabled without --client-auth or --optional-client-auth, so one is never requested"
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"WARNING: the routes file uses require_client_cert or tls.* match conditions, "+
+			"but %s; require_client_cert routes will return 403 and tls.* conditions will "+
+			"never match. Run with --tls --ca <ca.pem> and --optional-client-auth (or --client-auth) "+
+			"to make them reachable.\n", reason)
+}
+
 // mockServerTLSOptions builds the TLS loader options for the mock server from
-// the loaded config plus the mock-specific --optional-client-auth flag. It is
-// factored out of runMock so the wiring — notably ClientAuthOptional — can be
-// asserted directly in tests.
+// the loaded config (the --optional-client-auth flag is already merged into
+// cfg.TLS.ClientAuthOptional by applyMockFlags). It is factored out of runMock
+// so the wiring — notably ClientAuthOptional — can be asserted directly in
+// tests.
 func mockServerTLSOptions(c *config.Config) radixTLS.ServerTLSOptions {
 	return radixTLS.ServerTLSOptions{
 		CertFile:           c.TLS.Cert,
 		KeyFile:            c.TLS.Key,
 		CAFile:             c.TLS.CA,
 		ClientAuth:         c.TLS.ClientAuth,
-		ClientAuthOptional: mockOptionalClientAuth,
+		ClientAuthOptional: c.TLS.ClientAuthOptional,
 		MinVersion:         c.TLS.MinVersion,
 	}
 }

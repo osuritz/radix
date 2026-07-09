@@ -270,6 +270,50 @@ func TestLoad_ExplicitFile(t *testing.T) {
 	}
 }
 
+func TestLoad_TLSClientAuthOptional(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to false", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "radix.yml")
+		if err := os.WriteFile(path, []byte("port: 3000\n"), 0o600); err != nil {
+			t.Fatalf("write config fixture: %v", err)
+		}
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.TLS.ClientAuthOptional {
+			t.Error("tls.client_auth_optional = true, want default false")
+		}
+	})
+
+	t.Run("set from config file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "radix.yml")
+		content := "tls:\n  enabled: true\n  ca: ./certs/ca.pem\n  client_auth_optional: true\n"
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write config fixture: %v", err)
+		}
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.TLS.ClientAuthOptional {
+			t.Error("tls.client_auth_optional = false, want true from config file")
+		}
+		if cfg.TLS.ClientAuth {
+			t.Error("tls.client_auth = true, want default false")
+		}
+	})
+}
+
 func TestLoad_MalformedYAML(t *testing.T) {
 	t.Parallel()
 

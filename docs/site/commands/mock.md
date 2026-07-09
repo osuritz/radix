@@ -30,7 +30,7 @@ routes with templated bodies to mimic a real endpoint your frontend depends on.
 | `--fail-rate` | `0` | Random failure rate, percentage 0–100 |
 | `--fail-status` | `500` | Status returned for random failures |
 | `--cors` | `false` | Add permissive CORS headers |
-| `--optional-client-auth` | `false` | Request but don't require a client certificate (verified when presented); enables `require_client_cert` routes |
+| `--optional-client-auth` | `false` | Request but don't require a client certificate (verified when presented); enables `require_client_cert` routes. Config key: `tls.client_auth_optional` |
 
 Global flags apply too — see [Configuration](/configuration#global-flags).
 

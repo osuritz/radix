@@ -498,7 +498,31 @@ func TestNewServerTLSConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("required client auth takes precedence over optional", func(t *testing.T) {
+	t.Run("required plus optional client auth errors", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		ca := generateTestCA(t, KeyTypeECDSA)
+		serverCert := generateSignedServerCert(t, ca, KeyTypeECDSA)
+		certPath, keyPath := writeTestCert(t, dir, serverCert)
+		caPath := writeCAFile(t, dir, ca.certPEM)
+
+		cfg := ServerTLSOptions{
+			CertFile:           certPath,
+			KeyFile:            keyPath,
+			CAFile:             caPath,
+			ClientAuth:         true,
+			ClientAuthOptional: true,
+			MinVersion:         "1.2",
+		}
+
+		_, err := NewServerTLSConfig(cfg)
+		if err == nil {
+			t.Fatal("expected error when both ClientAuth and ClientAuthOptional are set")
+		}
+	})
+
+	t.Run("optional client auth without CA errors", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
@@ -509,18 +533,13 @@ func TestNewServerTLSConfig(t *testing.T) {
 		cfg := ServerTLSOptions{
 			CertFile:           certPath,
 			KeyFile:            keyPath,
-			ClientAuth:         true,
 			ClientAuthOptional: true,
 			MinVersion:         "1.2",
 		}
 
-		tlsCfg, err := NewServerTLSConfig(cfg)
-		if err != nil {
-			t.Fatalf("NewServerTLSConfig: %v", err)
-		}
-
-		if tlsCfg.ClientAuth != cryptotls.RequireAndVerifyClientCert {
-			t.Errorf("ClientAuth = %d, want RequireAndVerifyClientCert (require wins over optional)", tlsCfg.ClientAuth)
+		_, err := NewServerTLSConfig(cfg)
+		if err == nil {
+			t.Fatal("expected error for optional client auth without a CA file")
 		}
 	})
 }

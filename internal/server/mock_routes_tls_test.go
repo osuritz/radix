@@ -432,3 +432,68 @@ routes:
 		t.Errorf("with cert /secure = %d %q, want 200 with fingerprint %s", code, body, hex.EncodeToString(sum[:]))
 	}
 }
+
+func TestCompiledRoutes_HasClientCertRequirements(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{
+			name: "require_client_cert route",
+			yaml: `
+routes:
+  - path: /secure
+    require_client_cert: true
+    response: { status: 200, body: ok }
+`,
+			want: true,
+		},
+		{
+			name: "tls condition match",
+			yaml: `
+routes:
+  - path: /whoami
+    conditions:
+      - match: { tls.cn: service-a }
+        response: { status: 200, body: hi }
+      - default: true
+        response: { status: 401, body: nope }
+`,
+			want: true,
+		},
+		{
+			name: "no client-cert dependence",
+			yaml: `
+routes:
+  - path: /open
+    conditions:
+      - match: { headers.X-Token: secret }
+        response: { status: 200, body: ok }
+    response: { status: 401, body: nope }
+`,
+			want: false,
+		},
+		{
+			name: "no routes",
+			yaml: `
+settings:
+  latency: 0
+routes: []
+`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compiled, err := CompileRoutes([]byte(tt.yaml), t.TempDir())
+			if err != nil {
+				t.Fatalf("CompileRoutes: %v", err)
+			}
+			if got := compiled.HasClientCertRequirements(); got != tt.want {
+				t.Errorf("HasClientCertRequirements() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

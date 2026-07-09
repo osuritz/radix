@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,20 +328,17 @@ func TestRunMock_TLSConfigError(t *testing.T) {
 func TestRunMock_TLSOptionalClientAuthBindFailure(t *testing.T) {
 	certPath, keyPath, caPath := genTestCerts(t)
 
-	oldOpt := mockOptionalClientAuth
-	t.Cleanup(func() { mockOptionalClientAuth = oldOpt })
-	mockOptionalClientAuth = true
-
 	withCfg(t, &config.Config{
 		Port: occupiedPort(t),
 		Host: "127.0.0.1",
 		Mock: config.MockConfig{FailStatus: 500, Builtin: true},
 		TLS: config.TLSConfig{
-			Enabled:    true,
-			Cert:       certPath,
-			Key:        keyPath,
-			CA:         caPath,
-			MinVersion: "1.3",
+			Enabled:            true,
+			Cert:               certPath,
+			Key:                keyPath,
+			CA:                 caPath,
+			ClientAuthOptional: true,
+			MinVersion:         "1.3",
 		},
 		Metrics: config.MetricsConfig{Enabled: false},
 	})
@@ -355,16 +353,6 @@ func TestRunMock_TLSOptionalClientAuthBindFailure(t *testing.T) {
 }
 
 func TestMockServerTLSOptions(t *testing.T) {
-	oldOpt := mockOptionalClientAuth
-	t.Cleanup(func() { mockOptionalClientAuth = oldOpt })
-
-	tlsCfg := config.TLSConfig{
-		Cert:       "/certs/cert.pem",
-		Key:        "/certs/key.pem",
-		CA:         "/certs/ca.pem",
-		MinVersion: "1.3",
-	}
-
 	tests := []struct {
 		name     string
 		optional bool
@@ -375,7 +363,13 @@ func TestMockServerTLSOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockOptionalClientAuth = tt.optional
+			tlsCfg := config.TLSConfig{
+				Cert:               "/certs/cert.pem",
+				Key:                "/certs/key.pem",
+				CA:                 "/certs/ca.pem",
+				ClientAuthOptional: tt.optional,
+				MinVersion:         "1.3",
+			}
 
 			opts := mockServerTLSOptions(&config.Config{TLS: tlsCfg})
 
@@ -397,6 +391,121 @@ func TestMockServerTLSOptions(t *testing.T) {
 			if opts.ClientAuthOptional != tt.optional {
 				t.Errorf("ClientAuthOptional = %v, want %v (must follow --optional-client-auth)",
 					opts.ClientAuthOptional, tt.optional)
+			}
+		})
+	}
+}
+
+// TestRunMock_ClientCertRoutesUnreachableWarning asserts the startup warning
+// for routes that depend on a TLS client certificate: it must appear when the
+// effective TLS mode never requests one (plain HTTP, or --tls without any
+// client-auth flag) and must NOT appear when --optional-client-auth makes the
+// routes reachable or when the routes have no client-cert dependence. runMock
+// is driven to its bind failure (occupied port) so the full startup path —
+// including the warning — executes without serving.
+func TestRunMock_ClientCertRoutesUnreachableWarning(t *testing.T) {
+	certPath, keyPath, caPath := genTestCerts(t)
+
+	requireCertRoutes := `
+routes:
+  - path: /secure
+    require_client_cert: true
+    response: { status: 200, body: ok }
+`
+	tlsConditionRoutes := `
+routes:
+  - path: /whoami
+    conditions:
+      - match: { tls.cn: service-a }
+        response: { status: 200, body: hi }
+      - default: true
+        response: { status: 401, body: nope }
+`
+	plainRoutes := `
+routes:
+  - path: /open
+    response: { status: 200, body: ok }
+`
+
+	tests := []struct {
+		name        string
+		routes      string
+		tls         config.TLSConfig
+		wantWarning bool
+	}{
+		{
+			name:        "plain HTTP with require_client_cert warns",
+			routes:      requireCertRoutes,
+			wantWarning: true,
+		},
+		{
+			name:        "plain HTTP with tls condition warns",
+			routes:      tlsConditionRoutes,
+			wantWarning: true,
+		},
+		{
+			name:   "TLS without client auth warns",
+			routes: requireCertRoutes,
+			tls: config.TLSConfig{
+				Enabled:    true,
+				Cert:       certPath,
+				Key:        keyPath,
+				MinVersion: "1.3",
+			},
+			wantWarning: true,
+		},
+		{
+			name:   "TLS with optional client auth does not warn",
+			routes: requireCertRoutes,
+			tls: config.TLSConfig{
+				Enabled:            true,
+				Cert:               certPath,
+				Key:                keyPath,
+				CA:                 caPath,
+				ClientAuthOptional: true,
+				MinVersion:         "1.3",
+			},
+			wantWarning: false,
+		},
+		{
+			name:        "no client-cert routes does not warn",
+			routes:      plainRoutes,
+			wantWarning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routesPath := writeRoutesFile(t, tt.routes)
+			withCfg(t, &config.Config{
+				Port:    occupiedPort(t),
+				Host:    "127.0.0.1",
+				Mock:    config.MockConfig{FailStatus: 500, Builtin: true, Routes: routesPath},
+				TLS:     tt.tls,
+				Metrics: config.MetricsConfig{Enabled: false},
+			})
+
+			// A bare command (no mock flags registered) is fine here: Changed()
+			// on an unregistered flag reports false, so runMock reads the cfg
+			// values installed above.
+			cmd := &cobra.Command{Use: "mock"}
+			var stdout, stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			err := runMock(cmd, nil)
+			if err == nil {
+				t.Fatal("expected bind error from occupied port, got nil")
+			}
+			assertBindFailure(t, err)
+
+			got := stderr.String()
+			if tt.wantWarning {
+				if !strings.Contains(got, "WARNING") || !strings.Contains(got, "require_client_cert") {
+					t.Errorf("expected unreachable-client-cert warning on stderr, got %q", got)
+				}
+			} else if strings.Contains(got, "WARNING") {
+				t.Errorf("expected no warning on stderr, got %q", got)
 			}
 		})
 	}
