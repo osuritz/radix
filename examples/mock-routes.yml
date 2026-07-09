@@ -298,7 +298,9 @@ routes:
   #
   # For require_client_cert (and the certless condition arms) to be reachable,
   # start the server so a certificate is requested but not required:
-  #   radix gencert && radix gencert --client
+  #   radix gencert --output certs
+  #   radix gencert --client --ca-cert certs/ca.pem --ca-key certs/ca-key.pem \
+  #     --output certs/client
   #   radix mock routes.yml --tls --cert certs/cert.pem --key certs/key.pem \
   #     --ca certs/ca.pem --optional-client-auth
   # (With the global --client-auth flag instead, certless connections are

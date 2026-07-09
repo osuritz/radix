@@ -19,13 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verified certificate was presented. To make per-route requirements reachable,
   `radix mock` gains `--optional-client-auth` (maps to TLS
   `VerifyClientCertIfGiven`; requires `--tls` and `--ca`, conflicts with
-  `--client-auth`, whose require-and-verify behavior is unchanged). See
-  `examples/mock-routes.yml` and the mock docs pages.
+  `--client-auth`, whose require-and-verify behavior is unchanged), backed by
+  a `tls.client_auth_optional` config key that serve/proxy/echo honor too.
+  The TLS loader rejects the ambiguous `client_auth` + `client_auth_optional`
+  combination and optional client auth without a CA file (which would silently
+  verify certificates against the system root store), and `radix mock` warns
+  at startup when routes depend on a client certificate the effective TLS mode
+  will never request. See `examples/mock-routes.yml` and the mock docs pages.
 - **`radix validate --type`** — the previously inert `--type` flag now works:
-  `auto` (default) detects a mock-routes file by its top-level
-  `routes`/`settings` keys and validates it through the real route compiler
-  (`✓ Routes: N compiled`) instead of silently mis-validating routes files as
-  main configs; `--type main` / `--type mock-routes` force a mode.
+  `auto` (default) detects a mock-routes file by its top-level `routes` key and
+  validates it through the real route compiler (`✓ Routes: N compiled`) plus
+  the same settings range checks `radix mock` enforces at startup, instead of
+  silently mis-validating routes files as main configs; `--type main` /
+  `--type mock-routes` force a mode.
 - **Performance benchmark suite** — benchmarks for static file serving
   (small/large/gzip), mock route matching and template rendering, the reverse
   proxy end-to-end, the logging+metrics+gzip middleware stack, and the metrics

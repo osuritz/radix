@@ -364,7 +364,9 @@ is *requested but not required* — a presented certificate is verified against
 the CA, while certless connections still reach your routes:
 
 ```bash
-radix gencert && radix gencert --client
+radix gencert --output certs
+radix gencert --client --ca-cert certs/ca.pem --ca-key certs/ca-key.pem \
+  --output certs/client
 radix mock routes.yml --tls --cert certs/cert.pem --key certs/key.pem \
   --ca certs/ca.pem --optional-client-auth
 ```
@@ -440,7 +442,7 @@ selection:
 curl --cacert certs/ca.pem https://localhost:8080/api/secure
 # {"error":"client certificate required"}          (403)
 
-curl --cacert certs/ca.pem --cert certs/client.pem --key certs/client-key.pem \
+curl --cacert certs/ca.pem --cert certs/client/cert.pem --key certs/client/key.pem \
   https://localhost:8080/api/secure
 # {"serial":"...","sha256":"..."}                  (200)
 ```

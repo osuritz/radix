@@ -68,9 +68,9 @@ signs:
     signature: "${artifact}.asc"
     # The passphrase is fed on stdin via --passphrase-fd 0 so that
     # passphrase-protected keys work on the headless runner. When
-    # GPG_PASSPHRASE is empty (passphrase-less key), gpg reads an empty
-    # passphrase and signs normally.
-    stdin: "{{ .Env.GPG_PASSPHRASE }}"
+    # GPG_PASSPHRASE is empty or unset (passphrase-less key), gpg reads an
+    # empty passphrase and signs normally.
+    stdin: '{{ envOrDefault "GPG_PASSPHRASE" "" }}'
     args:
       - "--batch"
       - "--pinentry-mode"
