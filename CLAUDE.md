@@ -2,7 +2,7 @@
 
 This document provides comprehensive guidance for AI assistants (like Claude Code) working on the Radix codebase. It covers project structure, development workflows, conventions, and best practices.
 
-**Last Updated**: 2026-06-15
+**Last Updated**: 2026-07-08
 **Project Version**: v0.7.1
 **Go Version**: 1.25+
 
@@ -38,17 +38,21 @@ Provides local development HTTP capabilities:
 - **Metrics** - Built-in observability with JSON and Prometheus formats
 
 ### Project Status
-- **Phase**: Feature-complete for the alpha/beta (v0.1.0-alpha.1)
-- **Completed**: CLI framework, config system, metrics infrastructure, CI/CD,
-  and all commands — `serve`, `proxy`, `echo`, `mock` (built-in httpbin-style
-  endpoints + custom YAML routes + hot-reload), `gencert`, `version`,
-  `validate` — plus TLS/HTTPS support and the middleware suite (logging,
-  metrics, CORS, gzip, auth header injection, security/HSTS). All are
-  implemented and tested.
-- **Remaining (Phase 9 polish)**: release hardening (binary signing, distribution
-  channels), expanded integration/benchmark coverage, and a few nice-to-haves
-  noted in `IMPLEMENTATION_PLAN.md` (e.g. per-command auth/proxy/mock metrics,
-  per-route TLS, client-cert inspection in echo).
+- **Phase**: Feature-complete for 1.0
+- **Completed**: CLI framework, config system, metrics infrastructure (including
+  per-command auth/proxy/echo/mock metrics), CI/CD, and all commands — `serve`,
+  `proxy`, `echo`, `mock` (built-in httpbin-style endpoints + custom YAML routes
+  + hot-reload + client-certificate matching/templating), `gencert`, `version`,
+  `validate` (main configs and mock-routes files) — plus TLS/HTTPS support
+  (including mTLS and optional client auth), the middleware suite (logging,
+  metrics, CORS, gzip, auth header injection, security/HSTS), performance
+  benchmarks (`make bench`), gated GPG release signing, and a verification
+  guide (`docs/VERIFICATION.md`).
+- **Remaining (owner actions / post-1.0)**: provision the GPG release key and
+  secrets (the signing pipeline is wired and skips cleanly without them), macOS
+  notarization and Windows Authenticode (need accounts/certificates), and
+  package-manager distribution (Homebrew/Chocolatey/Scoop — deferred post-1.0
+  per `IMPLEMENTATION_PLAN.md`).
 
 ### Key Characteristics
 - **Language**: Go 1.25+

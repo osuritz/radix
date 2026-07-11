@@ -667,100 +667,100 @@ mock:
 ## 5. Implementation Phases
 
 ### Phase 1: Foundation
-- [ ] Initialize Go module
-- [ ] Set up project structure
-- [ ] Implement root command with Cobra
-- [ ] Implement version command
-  - [ ] Version info struct
-  - [ ] Build-time variable injection
-  - [ ] JSON output format
-  - [ ] Short format flag
-- [ ] Set up configuration loading (Viper)
-  - [ ] YAML/JSON parsing
-  - [ ] Environment variable support
-  - [ ] Config file discovery (./, ~/, /etc/)
-- [ ] Implement validate command
-  - [ ] Config file schema validation
-  - [ ] File path existence checks
-  - [ ] Port range validation
-  - [ ] TLS certificate validation
-  - [ ] Warning system for best practices
-- [ ] Implement logging middleware
-- [ ] Set up testing framework
+- [x] Initialize Go module
+- [x] Set up project structure
+- [x] Implement root command with Cobra
+- [x] Implement version command
+  - [x] Version info struct
+  - [x] Build-time variable injection
+  - [x] JSON output format
+  - [x] Short format flag
+- [x] Set up configuration loading (Viper)
+  - [x] YAML/JSON parsing
+  - [x] Environment variable support
+  - [x] Config file discovery (./, ~/, /etc/)
+- [x] Implement validate command
+  - [x] Config file schema validation
+  - [x] File path existence checks
+  - [x] Port range validation
+  - [x] TLS certificate validation
+  - [x] Warning system for best practices
+- [x] Implement logging middleware
+- [x] Set up testing framework
 
 ### Phase 2: Metrics Infrastructure
-- [ ] Implement `internal/metrics/collector.go`
-  - [ ] Request counter (atomic operations)
-  - [ ] Status code tracking
-  - [ ] HTTP method tracking
-  - [ ] Response time histogram
-  - [ ] Bandwidth tracking
-- [ ] Implement `internal/metrics/histogram.go`
-  - [ ] Percentile calculations (p50, p95, p99)
-  - [ ] Min/max/avg tracking
-- [ ] Implement `internal/metrics/prometheus.go`
-  - [ ] Prometheus text format exporter
-  - [ ] Counter and histogram metrics
-  - [ ] Label support
-- [ ] Add metrics middleware
-  - [ ] Request wrapping
-  - [ ] Response wrapping for size tracking
-  - [ ] Automatic metric recording
-- [ ] Create metrics endpoint handler
-- [ ] Add global metrics flags (--metrics, --metrics-path, --metrics-format)
-- [ ] Tests for metrics collection
+- [x] Implement `internal/metrics/collector.go`
+  - [x] Request counter (atomic operations)
+  - [x] Status code tracking
+  - [x] HTTP method tracking
+  - [x] Response time histogram
+  - [x] Bandwidth tracking
+- [x] Implement `internal/metrics/histogram.go`
+  - [x] Percentile calculations (p50, p95, p99)
+  - [x] Min/max/avg tracking
+- [x] Implement `internal/metrics/prometheus.go`
+  - [x] Prometheus text format exporter
+  - [x] Counter and histogram metrics
+  - [x] Label support
+- [x] Add metrics middleware
+  - [x] Request wrapping
+  - [x] Response wrapping for size tracking
+  - [x] Automatic metric recording
+- [x] Create metrics endpoint handler
+- [x] Add global metrics flags (--metrics, --metrics-path, --metrics-format)
+- [x] Tests for metrics collection
 
 ### Phase 3: CI/CD Pipeline & Automation
-- [ ] **GitHub Actions Workflows**
-  - [ ] Create `.github/workflows/ci.yml` for continuous integration
-  - [ ] Create `.github/workflows/release.yml` for releases
-  - [ ] Set up workflow triggers (push, pull_request, tags)
+- [x] **GitHub Actions Workflows**
+  - [x] Create `.github/workflows/ci.yml` for continuous integration
+  - [x] Create `.github/workflows/release.yml` for releases
+  - [x] Set up workflow triggers (push, pull_request, tags)
 
-- [ ] **Build Automation**
-  - [ ] Multi-platform build matrix (macOS, Windows, Linux)
-  - [ ] Go 1.25 (single pinned version)
-  - [ ] Build caching for faster CI runs
-  - [ ] Artifact uploading for builds
+- [x] **Build Automation**
+  - [x] Multi-platform build matrix (macOS, Windows, Linux)
+  - [x] Go 1.25 (single pinned version)
+  - [x] Build caching for faster CI runs
+  - [x] Artifact uploading for builds
 
-- [ ] **Code Quality & Linting**
-  - [ ] Integrate golangci-lint with multiple linters
-  - [ ] Configure linters (.golangci.yml)
-  - [ ] Run `go vet` and `staticcheck`
-  - [ ] Check code formatting with `gofmt`
-  - [ ] Enforce consistent imports with `goimports`
+- [x] **Code Quality & Linting**
+  - [x] Integrate golangci-lint with multiple linters
+  - [x] Configure linters (.golangci.yml)
+  - [x] Run `go vet` and `staticcheck`
+  - [x] Check code formatting with `gofmt`
+  - [x] Enforce consistent imports with `goimports`
 
-- [ ] **Testing Automation**
-  - [ ] Run tests on all platforms
-  - [ ] Enable race detection (`-race` flag)
-  - [ ] Generate coverage reports
-  - [ ] Upload coverage to Codecov or similar
-  - [ ] Set minimum coverage threshold
+- [x] **Testing Automation**
+  - [x] Run tests on all platforms
+  - [x] Enable race detection (`-race` flag)
+  - [x] Generate coverage reports
+  - [x] Upload coverage to Codecov or similar
+  - [x] Set minimum coverage threshold
 
-- [ ] **Security Scanning**
-  - [ ] Integrate gosec for security issues
-  - [ ] Run govulncheck for vulnerability scanning
-  - [ ] Dependency security scanning
-  - [ ] SAST (Static Application Security Testing)
+- [x] **Security Scanning**
+  - [x] Integrate gosec for security issues
+  - [x] Run govulncheck for vulnerability scanning
+  - [x] Dependency security scanning
+  - [x] SAST (Static Application Security Testing)
 
-- [ ] **Semantic Versioning**
-  - [ ] Implement version detection from git tags
-  - [ ] Support semantic versioning (vX.Y.Z)
-  - [ ] Generate changelog from commits
-  - [ ] Version bump automation
+- [x] **Semantic Versioning**
+  - [x] Implement version detection from git tags
+  - [x] Support semantic versioning (vX.Y.Z)
+  - [x] Generate changelog from commits
+  - [x] Version bump automation
 
-- [ ] **Release Automation (GoReleaser)**
-  - [ ] Configure `.goreleaser.yml`
-  - [ ] Cross-platform binary builds
-  - [ ] Archive generation (.tar.gz, .zip)
-  - [ ] SHA256 checksum generation
-  - [ ] GitHub release creation
-  - [ ] Release notes generation
+- [x] **Release Automation (GoReleaser)**
+  - [x] Configure `.goreleaser.yml`
+  - [x] Cross-platform binary builds
+  - [x] Archive generation (.tar.gz, .zip)
+  - [x] SHA256 checksum generation
+  - [x] GitHub release creation
+  - [x] Release notes generation
   - [ ] Homebrew formula (future)
 
-- [ ] **Additional Automation**
-  - [ ] Dependabot configuration for dependency updates
-  - [ ] Pull request templates
-  - [ ] Issue templates
+- [x] **Additional Automation**
+  - [x] Dependabot configuration for dependency updates
+  - [x] Pull request templates
+  - [x] Issue templates
   - [ ] CODEOWNERS file
   - [ ] Branch protection rules documentation
 
@@ -812,14 +812,14 @@ mock:
         `KeychainReader` interface (swappable / testable)
   - [x] Security: fail loud on unresolved sources (502); never log secret values
         (names-only verbose injection logging)
-  - [ ] Add auth provider metrics (injections, errors, latency)
+  - [x] Add auth provider metrics (injections, errors, latency)
   - [x] Tests for `HeaderProvider` interface compliance
   - [x] Tests for `InjectHeaders` middleware (success, provider error, concurrent access)
   - [x] Tests for `StaticProvider`
   - [x] Tests for value resolver (env, keychain, caching, fail-loud, redaction)
   - [x] Tests for provider registry (register, get, auto-detect single, disambiguate multiple)
   - [x] Document fork integration pattern in code comments
-  - [ ] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
+  - [x] Example guide: `docs/CUSTOM_AUTH_PROVIDER.md` (bearer token walkthrough with tests)
 
 - [x] Implement `proxy` command (HTTP)
   - [x] Basic reverse proxy
@@ -828,7 +828,7 @@ mock:
   - [x] Path rewriting
   - [x] WebSocket support (native via httputil.ReverseProxy)
   - [x] Integrate metrics middleware
-  - [ ] Add proxy-specific metrics (backend response times, errors, etc.)
+  - [x] Add proxy-specific metrics (backend response times, errors, etc.)
   - [x] Tests for proxy command
   - [x] Integration test: proxy with `StaticProvider` auth headers
 
@@ -854,7 +854,7 @@ mock:
   - [x] Delay simulation
   - [x] JSON output formatting
   - [x] Integrate metrics middleware
-  - [ ] Add echo-specific metrics (delays, custom responses, etc.)
+  - [x] Add echo-specific metrics (delays, custom responses, etc.)
   - [x] Tests for echo command
 
 - [x] Implement `mock` command (HTTP)
@@ -863,65 +863,65 @@ mock:
   - [x] Template responses ({{uuid}}, {{now}}, etc.)
   - [x] File watching and hot reload
   - [x] Integrate metrics middleware
-  - [ ] Add mock-specific metrics (route matches, template renders, config reloads)
+  - [x] Add mock-specific metrics (route matches, template renders, config reloads)
   - [x] Tests for mock command
 
 ### Phase 8: Advanced Commands (HTTPS)
 - [x] **TLS Phase 3c: Echo Command TLS**
   - [x] Add HTTPS support to echo
   - [x] Display TLS connection info in responses (version, cipher, server name)
-  - [ ] Client certificate inspection (detailed peer-cert fields)
-  - [ ] Integration tests with client certs
+  - [x] Client certificate inspection (detailed peer-cert fields)
+  - [x] Integration tests with client certs
 
 - [x] **TLS Phase 3d: Mock Command TLS**
   - [x] Add HTTPS support to mock
-  - [ ] Per-route TLS requirements
-  - [ ] Client certificate-based routing
-  - [ ] Template support for client cert fields
-  - [ ] Integration tests with complex TLS scenarios
+  - [x] Per-route TLS requirements
+  - [x] Client certificate-based routing
+  - [x] Template support for client cert fields
+  - [x] Integration tests with complex TLS scenarios
 
 ### Phase 9: Polish & Release
 - [ ] **Binary Signing & Security (Priority: GPG first)**
   - [ ] **GPG Signing (All Platforms)** - Cross-platform, no cost
     - [ ] Set up GPG key for release signing
     - [ ] Add GPG_FINGERPRINT to GitHub secrets
-    - [ ] Configure GoReleaser for GPG signing of checksums
-    - [ ] Update release workflow with GPG signing
-    - [ ] Document signature verification in README
+    - [x] Configure GoReleaser for GPG signing of checksums
+    - [x] Update release workflow with GPG signing
+    - [x] Document signature verification in README
     - [ ] Add public key to repository/docs
   - [ ] macOS: Apple Developer ID codesigning setup (requires Apple Developer account)
   - [ ] macOS: Notarization with gon (requires notarization service)
   - [ ] Windows: Authenticode signing (requires code signing certificate)
   - [ ] Update release workflow with all signing methods
   - [ ] Create comprehensive signature verification documentation
-- [ ] Comprehensive testing (unit + integration)
-  - [ ] Achieve >80% code coverage
-  - [ ] End-to-end TLS testing
-  - [ ] Cross-platform testing
+- [x] Comprehensive testing (unit + integration)
+  - [x] Achieve >80% code coverage
+  - [x] End-to-end TLS testing
+  - [x] Cross-platform testing
   - [x] End-to-end smoke script exercising every command (`scripts/smoke.sh`, `make smoke`)
-- [ ] Documentation
+- [x] Documentation
   - [x] README with quickstart
   - [x] Command documentation
   - [x] TLS setup guide
   - [x] Example configurations
   - [x] Contributing guidelines
-  - [ ] Binary verification guide (GPG)
+  - [x] Binary verification guide (GPG)
 - [x] Examples
   - [x] Basic usage examples for each command
   - [x] TLS configuration examples
   - [x] Mock API examples
-  - [ ] Real-world use case examples
+  - [x] Real-world use case examples
 - [ ] Distribution enhancements
   - [ ] Homebrew tap setup
   - [ ] Chocolatey package (Windows)
   - [ ] Scoop manifest (Windows)
-  - [ ] Installation documentation
-  - [ ] Signature verification guide
+  - [x] Installation documentation
+  - [x] Signature verification guide
 - [ ] Final polish
-  - [ ] Performance benchmarks
+  - [x] Performance benchmarks
   - [ ] Memory profiling
-  - [ ] Error message improvements
-  - [ ] Help text refinement
+  - [x] Error message improvements
+  - [x] Help text refinement
 
 ## 6. Code Quality Standards
 
