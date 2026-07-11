@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+          check-latest: true
           cache: true
 
       - name: golangci-lint
@@ -41,6 +42,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+          check-latest: true
           cache: true
 
       - name: Run gosec
@@ -67,6 +69,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+          check-latest: true
           cache: true
 
       - name: Download dependencies
@@ -113,6 +116,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+          check-latest: true
           cache: true
 
       # Node is required only in the build job because `make build` triggers
