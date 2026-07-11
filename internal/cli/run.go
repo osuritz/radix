@@ -80,7 +80,7 @@ func runServers(ctx context.Context, main *server.Server, admin *server.AdminSer
 		}()
 	}
 
-	var auxErrChs []chan error
+	auxErrChs := make([]chan error, 0, len(aux))
 	for _, a := range aux {
 		if a == nil {
 			continue
