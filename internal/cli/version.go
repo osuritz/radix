@@ -20,18 +20,16 @@ var versionCmd = &cobra.Command{
 	Long: `Display version information for radix.
 
 Shows the version number, git commit hash, build date, Go version,
-and platform information.
-
-Examples:
-  radix version              # Full version information
+and platform information.`,
+	Example: `  radix version              # Full version information
   radix version --short      # Just the version number
-  radix version --json       # JSON formatted output`,
+  radix version --json       # JSON-formatted output`,
 	RunE: runVersion,
 }
 
 func init() {
-	versionCmd.Flags().BoolVar(&shortVersion, "short", false, "show only version number")
-	versionCmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	versionCmd.Flags().BoolVar(&shortVersion, "short", false, "show only the version number")
+	versionCmd.Flags().BoolVar(&jsonOutput, "json", false, "output version information as JSON")
 }
 
 func runVersion(cmd *cobra.Command, _ []string) error {
