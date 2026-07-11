@@ -1,4 +1,4 @@
-.PHONY: build ui test lint install clean run coverage smoke help
+.PHONY: build ui test bench lint install clean run coverage smoke help
 
 # Version information
 VERSION ?= dev
@@ -31,6 +31,10 @@ build: ui ## Build the binary
 test: ## Run tests
 	@echo "Running tests..."
 	go test -v -race ./...
+
+bench: ## Run benchmarks
+	@echo "Running benchmarks..."
+	go test -bench=. -benchmem -run=^$$ ./...
 
 coverage: ## Run tests with coverage
 	@echo "Running tests with coverage..."

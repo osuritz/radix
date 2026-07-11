@@ -50,6 +50,14 @@ curl -fsSL https://raw.githubusercontent.com/osuritz/radix/main/scripts/install.
 go install github.com/osuritz/radix/cmd/radix@latest
 ```
 
+### Verifying releases
+
+Every release ships with a SHA256 `checksums.txt`; verify downloaded archives
+with `sha256sum -c checksums.txt --ignore-missing`. GPG signatures for the
+checksums file are wired into the release pipeline and will appear once the
+project signing key is published. See [docs/VERIFICATION.md](docs/VERIFICATION.md)
+for step-by-step instructions per platform.
+
 ## Quick Start
 
 ```bash
