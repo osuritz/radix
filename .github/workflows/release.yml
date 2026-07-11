@@ -32,14 +32,42 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # GPG signing is optional: when the GPG_PRIVATE_KEY / GPG_FINGERPRINT
+      # secrets are not configured, signing is skipped and the release is
+      # published unsigned (checksums.txt only, no checksums.txt.asc).
+      - name: Check GPG signing secrets
+        id: signing
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_FINGERPRINT" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "GPG signing secrets found; release artifacts will be signed."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "GPG signing secrets not configured; publishing an unsigned release."
+          fi
+
+      - name: Import GPG key
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --clean ${{ steps.signing.outputs.enabled == 'false' && '--skip=sign' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+          # Empty string when the secret is absent (passphrase-less key);
+          # goreleaser feeds it to gpg on stdin either way.
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Upload assets
         uses: actions/upload-artifact@v7
