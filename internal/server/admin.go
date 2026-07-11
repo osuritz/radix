@@ -11,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/osuritz/radix/internal/config"
@@ -224,7 +223,7 @@ func healthzHandler(startTime time.Time, version string) http.HandlerFunc {
 func classifyAdminListenError(addr string, err error) error {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		if errors.Is(opErr.Err, syscall.EADDRINUSE) {
+		if errors.Is(opErr.Err, errAddrInUse) {
 			return fmt.Errorf("admin address %s is already in use: %w", addr, err)
 		}
 	}
