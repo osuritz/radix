@@ -79,6 +79,30 @@ func TestInfoShort(t *testing.T) {
 	}
 }
 
+func TestUserAgent(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "dev version", version: "dev", want: "radix/dev"},
+		{name: "semver version", version: "1.2.3", want: "radix/1.2.3"},
+		{name: "tagged version", version: "v0.7.1", want: "radix/v0.7.1"},
+	}
+
+	orig := Version
+	defer func() { Version = orig }()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Version = tt.version
+			if got := UserAgent(); got != tt.want {
+				t.Errorf("UserAgent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVersionDefaults(t *testing.T) {
 	// Reset to defaults
 	Version = "dev"
