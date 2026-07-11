@@ -47,6 +47,7 @@ export default defineConfig({
       {
         text: 'Guides',
         items: [
+          { text: 'Recipes', link: '/guides/recipes' },
           { text: 'Mock guide', link: '/guides/mock' },
           { text: 'TLS / HTTPS', link: '/guides/tls' },
           { text: 'Observability', link: '/guides/observability' },
@@ -86,6 +87,7 @@ export default defineConfig({
         text: 'Guides',
         collapsed: false,
         items: [
+          { text: 'Recipes', link: '/guides/recipes' },
           { text: 'Mock guide', link: '/guides/mock' },
           { text: 'TLS / HTTPS', link: '/guides/tls' },
           { text: 'Observability', link: '/guides/observability' },
