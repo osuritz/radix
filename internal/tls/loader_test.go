@@ -467,6 +467,81 @@ func TestNewServerTLSConfig(t *testing.T) {
 			t.Error("ClientCAs should be nil when no CAFile is provided")
 		}
 	})
+
+	t.Run("optional client auth verifies if given", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		ca := generateTestCA(t, KeyTypeECDSA)
+		serverCert := generateSignedServerCert(t, ca, KeyTypeECDSA)
+		certPath, keyPath := writeTestCert(t, dir, serverCert)
+		caPath := writeCAFile(t, dir, ca.certPEM)
+
+		cfg := ServerTLSOptions{
+			CertFile:           certPath,
+			KeyFile:            keyPath,
+			CAFile:             caPath,
+			ClientAuthOptional: true,
+			MinVersion:         "1.2",
+		}
+
+		tlsCfg, err := NewServerTLSConfig(cfg)
+		if err != nil {
+			t.Fatalf("NewServerTLSConfig: %v", err)
+		}
+
+		if tlsCfg.ClientAuth != cryptotls.VerifyClientCertIfGiven {
+			t.Errorf("ClientAuth = %d, want VerifyClientCertIfGiven", tlsCfg.ClientAuth)
+		}
+		if tlsCfg.ClientCAs == nil {
+			t.Error("ClientCAs should be set when CAFile is provided")
+		}
+	})
+
+	t.Run("required plus optional client auth errors", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		ca := generateTestCA(t, KeyTypeECDSA)
+		serverCert := generateSignedServerCert(t, ca, KeyTypeECDSA)
+		certPath, keyPath := writeTestCert(t, dir, serverCert)
+		caPath := writeCAFile(t, dir, ca.certPEM)
+
+		cfg := ServerTLSOptions{
+			CertFile:           certPath,
+			KeyFile:            keyPath,
+			CAFile:             caPath,
+			ClientAuth:         true,
+			ClientAuthOptional: true,
+			MinVersion:         "1.2",
+		}
+
+		_, err := NewServerTLSConfig(cfg)
+		if err == nil {
+			t.Fatal("expected error when both ClientAuth and ClientAuthOptional are set")
+		}
+	})
+
+	t.Run("optional client auth without CA errors", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		ca := generateTestCA(t, KeyTypeECDSA)
+		serverCert := generateSignedServerCert(t, ca, KeyTypeECDSA)
+		certPath, keyPath := writeTestCert(t, dir, serverCert)
+
+		cfg := ServerTLSOptions{
+			CertFile:           certPath,
+			KeyFile:            keyPath,
+			ClientAuthOptional: true,
+			MinVersion:         "1.2",
+		}
+
+		_, err := NewServerTLSConfig(cfg)
+		if err == nil {
+			t.Fatal("expected error for optional client auth without a CA file")
+		}
+	})
 }
 
 func TestNewClientTLSConfig(t *testing.T) {

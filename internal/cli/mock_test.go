@@ -27,7 +27,7 @@ func TestMockCmd_Registered(t *testing.T) {
 func TestMockCmd_Flags(t *testing.T) {
 	flags := []string{
 		"latency", "latency-jitter", "fail-rate", "fail-status",
-		"cors", "builtin", "prefix", "routes", "watch",
+		"cors", "builtin", "prefix", "routes", "watch", "optional-client-auth",
 	}
 	for _, name := range flags {
 		if mockCmd.Flags().Lookup(name) == nil {
@@ -254,6 +254,58 @@ func TestResolveRoutesArg(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "not both") {
 			t.Errorf("error = %v, want 'not both' conflict message", err)
+		}
+	})
+}
+
+func TestMockCmd_OptionalClientAuthValidation(t *testing.T) {
+	// The checks read the post-merge config (cfg.TLS.ClientAuthOptional), so
+	// config-file/env users hit the same validations as --optional-client-auth
+	// flag users.
+	oldCfg := cfg
+	defer func() { cfg = oldCfg }()
+
+	t.Run("requires --tls", func(t *testing.T) {
+		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
+		c.TLS = config.TLSConfig{ClientAuthOptional: true}
+		cfg = c
+
+		err := runMock(mockCmd, nil)
+		if err == nil {
+			t.Fatal("expected error for --optional-client-auth without --tls, got nil")
+		}
+		if !strings.Contains(err.Error(), "requires --tls") {
+			t.Errorf("error = %v, want 'requires --tls'", err)
+		}
+	})
+
+	t.Run("conflicts with --client-auth", func(t *testing.T) {
+		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
+		c.TLS = config.TLSConfig{Enabled: true, ClientAuth: true, ClientAuthOptional: true}
+		cfg = c
+
+		err := runMock(mockCmd, nil)
+		if err == nil {
+			t.Fatal("expected error for --optional-client-auth with --client-auth, got nil")
+		}
+		if !strings.Contains(err.Error(), "--client-auth") {
+			t.Errorf("error = %v, want --client-auth conflict message", err)
+		}
+	})
+
+	t.Run("requires --ca", func(t *testing.T) {
+		// Without a client CA, Go would fall back to the system root store for
+		// client-cert verification; that misconfiguration must be rejected.
+		c := newMockCfg(config.MockConfig{FailStatus: 500, Builtin: true})
+		c.TLS = config.TLSConfig{Enabled: true, ClientAuthOptional: true}
+		cfg = c
+
+		err := runMock(mockCmd, nil)
+		if err == nil {
+			t.Fatal("expected error for --optional-client-auth without --ca, got nil")
+		}
+		if !strings.Contains(err.Error(), "requires --ca") {
+			t.Errorf("error = %v, want 'requires --ca'", err)
 		}
 	})
 }

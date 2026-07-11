@@ -236,11 +236,12 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	if cfg.TLS.Enabled {
 		scheme = "https"
 		tlsCfg, tlsErr := radixTLS.NewServerTLSConfig(radixTLS.ServerTLSOptions{
-			CertFile:   cfg.TLS.Cert,
-			KeyFile:    cfg.TLS.Key,
-			CAFile:     cfg.TLS.CA,
-			ClientAuth: cfg.TLS.ClientAuth,
-			MinVersion: cfg.TLS.MinVersion,
+			CertFile:           cfg.TLS.Cert,
+			KeyFile:            cfg.TLS.Key,
+			CAFile:             cfg.TLS.CA,
+			ClientAuth:         cfg.TLS.ClientAuth,
+			ClientAuthOptional: cfg.TLS.ClientAuthOptional,
+			MinVersion:         cfg.TLS.MinVersion,
 		})
 		if tlsErr != nil {
 			return fmt.Errorf("TLS configuration error: %w", tlsErr)

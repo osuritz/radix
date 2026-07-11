@@ -16,6 +16,16 @@ type ServerTLSOptions struct {
 	KeyFile    string // Path to PEM-encoded server private key
 	CAFile     string // Optional: CA cert for client certificate verification
 	ClientAuth bool   // Require client certificates (mTLS)
+
+	// ClientAuthOptional requests client certificates without requiring them:
+	// a presented certificate is verified against CAFile
+	// (crypto/tls.VerifyClientCertIfGiven), but a connection without one is
+	// still accepted at the TLS layer, letting the application enforce
+	// per-route requirements (e.g. mock routes' require_client_cert).
+	// Setting it together with ClientAuth is a configuration error, as is
+	// setting it without CAFile.
+	ClientAuthOptional bool
+
 	MinVersion string // Minimum TLS version: "1.2" or "1.3"
 }
 
@@ -97,9 +107,26 @@ func NewServerTLSConfig(cfg ServerTLSOptions) (*cryptotls.Config, error) {
 		tlsConfig.CipherSuites = defaultCipherSuites()
 	}
 
-	// Configure client authentication
-	if cfg.ClientAuth {
-		tlsConfig.ClientAuth = cryptotls.RequireAndVerifyClientCert
+	// Configure client authentication. Requiring (ClientAuth) and merely
+	// requesting (ClientAuthOptional) a client certificate are mutually
+	// exclusive: silently picking one would mask a misconfiguration, so the
+	// ambiguity is rejected here rather than resolved. Optional client auth
+	// also demands an explicit client CA — with an empty CAFile Go would
+	// verify presented certificates against the SYSTEM root store, silently
+	// rejecting locally generated (gencert) client certs while accepting any
+	// WebPKI clientAuth certificate.
+	if cfg.ClientAuth && cfg.ClientAuthOptional {
+		return nil, fmt.Errorf("client authentication cannot be both required (ClientAuth) and optional (ClientAuthOptional): set only one")
+	}
+	if cfg.ClientAuthOptional && cfg.CAFile == "" {
+		return nil, fmt.Errorf("optional client authentication requires a client CA file: without one, presented certificates would be verified against the system root store instead of your own CA")
+	}
+	if cfg.ClientAuth || cfg.ClientAuthOptional {
+		if cfg.ClientAuth {
+			tlsConfig.ClientAuth = cryptotls.RequireAndVerifyClientCert
+		} else {
+			tlsConfig.ClientAuth = cryptotls.VerifyClientCertIfGiven
+		}
 
 		if cfg.CAFile != "" {
 			caPool, poolErr := loadCACertPool(cfg.CAFile)

@@ -38,6 +38,16 @@ type TLSConfig struct {
 	Key        string `mapstructure:"key"`
 	CA         string `mapstructure:"ca"`
 	ClientAuth bool   `mapstructure:"client_auth"`
+
+	// ClientAuthOptional requests but does not require a client certificate:
+	// a presented certificate is verified against CA, while certless
+	// connections still complete the handshake so the application can enforce
+	// per-route rules (e.g. mock routes' require_client_cert). It requires CA
+	// to be set and is mutually exclusive with ClientAuth. Backs the mock
+	// command's --optional-client-auth flag; for the other commands it is
+	// config/env only.
+	ClientAuthOptional bool `mapstructure:"client_auth_optional"`
+
 	MinVersion string `mapstructure:"min_version"` // "1.2" or "1.3"
 }
 
@@ -264,6 +274,7 @@ func setDefaults(v *viper.Viper) {
 	// TLS defaults
 	v.SetDefault("tls.enabled", false)
 	v.SetDefault("tls.client_auth", false)
+	v.SetDefault("tls.client_auth_optional", false)
 	v.SetDefault("tls.min_version", "1.2")
 
 	// Metrics defaults
