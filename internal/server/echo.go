@@ -357,9 +357,13 @@ func tlsInfo(state *tls.ConnectionState) map[string]any {
 // response: subject and issuer distinguished-name fields (CN and O), serial,
 // validity window, and subject-alternative names (DNS and IP).
 //
-// Validity timestamps use time.RFC3339 (second precision), which is the natural
-// granularity for certificate NotBefore/NotAfter; the echo response's timing
-// section uses RFC3339Nano because that data is sub-second.
+// Validity timestamps use time.RFC3339 (second precision, via the shared
+// certTimeRFC3339 helper), which is the natural granularity for certificate
+// NotBefore/NotAfter; the echo response's timing section uses RFC3339Nano
+// because that data is sub-second. The serial and validity values are produced
+// by the same helpers the mock routes' tls template data uses (certSerial /
+// certTimeRFC3339 in mock_routes.go), so the two surfaces render identical
+// values; the response's keys and shape are frozen and unchanged.
 func clientCertInfo(cert *x509.Certificate) map[string]any {
 	ipAddrs := make([]string, 0, len(cert.IPAddresses))
 	for _, ip := range cert.IPAddresses {
@@ -381,9 +385,9 @@ func clientCertInfo(cert *x509.Certificate) map[string]any {
 			"cn": cert.Issuer.CommonName,
 			"o":  cert.Issuer.Organization,
 		},
-		"serial":       cert.SerialNumber.String(),
-		"not_before":   cert.NotBefore.Format(time.RFC3339),
-		"not_after":    cert.NotAfter.Format(time.RFC3339),
+		"serial":       certSerial(cert),
+		"not_before":   certTimeRFC3339(cert.NotBefore),
+		"not_after":    certTimeRFC3339(cert.NotAfter),
 		"dns_names":    dnsNames,
 		"ip_addresses": ipAddrs,
 	}

@@ -64,6 +64,10 @@ tls:
   key: ./certs/key.pem
   ca: ./certs/ca.pem
   client_auth: false
+  # Request but don't require a client cert (verified against `ca`, which must
+  # be set; mutually exclusive with client_auth). Same as mock's
+  # --optional-client-auth flag; config/env only for serve/proxy/echo.
+  client_auth_optional: false
   min_version: "1.2"   # "1.2" or "1.3" (code default 1.2)
 
 # Metrics — served on a dedicated admin port (default 9090), NOT the app port.
