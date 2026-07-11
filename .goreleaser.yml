@@ -57,6 +57,34 @@ checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
+# GPG-sign the checksums file (detached, ASCII-armored: checksums.txt.asc).
+# Requires the GPG_FINGERPRINT env var and an imported private key; the
+# release workflow passes --skip=sign when the signing secrets are absent,
+# so unsigned releases still work.
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: gpg
+    signature: "${artifact}.asc"
+    # The passphrase is fed on stdin via --passphrase-fd 0 so that
+    # passphrase-protected keys work on the headless runner. When
+    # GPG_PASSPHRASE is empty or unset (passphrase-less key), gpg reads an
+    # empty passphrase and signs normally.
+    stdin: '{{ envOrDefault "GPG_PASSPHRASE" "" }}'
+    args:
+      - "--batch"
+      - "--pinentry-mode"
+      - "loopback"
+      - "--passphrase-fd"
+      - "0"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "--armor"
+      - "${artifact}"
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
