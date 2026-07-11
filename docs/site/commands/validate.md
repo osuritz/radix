@@ -22,6 +22,13 @@ applies at startup.
 | `--strict` | `false` | Fail on warnings, not just errors |
 | `--type` | `auto` | Config type: `main`, `mock-routes`, or `auto`-detect |
 
+In `auto` mode a file whose top level contains a `routes` key (the mock-routes
+schema) is validated as a mock-routes file; anything else — including a file
+with only a top-level `settings:` key, which could equally be a main config
+carrying a stray block — is validated as a main config. Use
+`--type mock-routes` to validate a settings-only routes file. Any other
+`--type` value is an error.
+
 ## What is checked
 
 For a main config (`radix.yml`):
@@ -34,8 +41,12 @@ For a main config (`radix.yml`):
 - `serve.http_port` differs from `port` when `http_redirect` is set
 - `serve.hsts_max_age` is not negative (`0` clears the policy)
 
-For a mock-routes file (`--type mock-routes`): route paths, methods, regex
-patterns, templates, and conditions.
+For a mock-routes file (auto-detected or `--type mock-routes`): the file is
+compiled with the same loader `radix mock` uses, so route paths, methods,
+regex patterns, response templates, conditions, sse/sequence/random selectors,
+and the `settings:` block are all checked. On success the number of compiled
+routes is reported; a file that compiles but defines no routes is a warning
+(fatal under `--strict`).
 
 ## Examples
 
@@ -56,8 +67,19 @@ radix validate ./radix.yml --strict
 ### Validate a routes file
 
 ```bash
-radix validate ./mock-routes.yml --type mock-routes
+radix validate ./mock-routes.yml                     # auto-detected
+radix validate ./routes.yml --type mock-routes       # forced
 ```
 
-Auto-detection usually works, but `--type` forces it when the filename is
-ambiguous.
+Auto-detection keys off the file's top-level `routes` key, so it usually just
+works; `--type mock-routes` forces the mode when the content is ambiguous
+(e.g. an empty skeleton file or a settings-only file).
+
+```
+Validating configuration: /path/to/mock-routes.yml
+
+✓ Syntax: OK
+✓ Routes: 15 compiled
+
+✓ Mock routes file is valid: /path/to/mock-routes.yml
+```
